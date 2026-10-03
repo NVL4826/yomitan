@@ -620,6 +620,7 @@ export class DictionaryImporter {
             tag: 'img',
             path: '', // Will be populated during requirement resolution
         };
+        if (typeof content.data !== 'undefined') { target.data = content.data; }
         requirements.push({type: 'structured-content-image', target, source: content, entry});
         return target;
     }

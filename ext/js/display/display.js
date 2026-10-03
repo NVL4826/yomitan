@@ -791,6 +791,32 @@ export class Display extends EventDispatcher {
         this._application.webExtension.triggerUnloaded();
     }
 
+    /**
+     * @param {string} text
+     * @returns {boolean}
+     */
+    copyText(text) {
+        const parent = document.body;
+        if (parent === null) { return false; }
+
+        let textarea = this._copyTextarea;
+        if (textarea === null) {
+            textarea = document.createElement('textarea');
+            this._copyTextarea = textarea;
+        }
+
+        textarea.value = text;
+        const activeElement = document.activeElement;
+        parent.appendChild(textarea);
+        try {
+            textarea.select();
+            return document.execCommand('copy');
+        } finally {
+            parent.removeChild(textarea);
+            if (activeElement instanceof HTMLElement) { activeElement.focus({preventScroll: true}); }
+        }
+    }
+
     // Private
 
     /**
@@ -2043,33 +2069,13 @@ export class Display extends EventDispatcher {
                     } catch (e) {
                         break;
                     }
-                    this._copyText(text);
+                    this.copyText(text);
                 }
                 break;
             default:
                 await this.invokeContentOrigin('frontendCopySelection', void 0);
                 break;
         }
-    }
-
-    /**
-     * @param {string} text
-     */
-    _copyText(text) {
-        const parent = document.body;
-        if (parent === null) { return; }
-
-        let textarea = this._copyTextarea;
-        if (textarea === null) {
-            textarea = document.createElement('textarea');
-            this._copyTextarea = textarea;
-        }
-
-        textarea.value = text;
-        parent.appendChild(textarea);
-        textarea.select();
-        document.execCommand('copy');
-        parent.removeChild(textarea);
     }
 
     /**

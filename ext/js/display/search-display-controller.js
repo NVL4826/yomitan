@@ -20,6 +20,7 @@ import {ClipboardMonitor} from '../comm/clipboard-monitor.js';
 import {createApiMap, invokeApiMapHandler} from '../core/api-map.js';
 import {EventListenerCollection} from '../core/event-listener-collection.js';
 import {querySelectorNotNull} from '../dom/query-selector.js';
+import {getResultEntryText} from './result-entry-text.js';
 import {isComposing} from '../language/ime-utilities.js';
 import {convertToKana, convertToKanaIME} from '../language/ja/japanese-wanakana.js';
 
@@ -70,6 +71,8 @@ export class SearchDisplayController {
         this._introAnimationTimer = null;
         /** @type {boolean} */
         this._clipboardMonitorEnabled = false;
+        /** @type {boolean} */
+        this._copyingEntry = false;
         /** @type {import('clipboard-monitor').ClipboardReaderLike} */
         this._clipboardReaderLike = {
             getText: this._display.application.api.clipboardGet.bind(this._display.application.api),
@@ -95,6 +98,7 @@ export class SearchDisplayController {
 
         this._display.on('optionsUpdated', this._onDisplayOptionsUpdated.bind(this));
         this._display.on('contentUpdateStart', this._onContentUpdateStart.bind(this));
+        this._display.on('contentUpdateEntry', this._onContentUpdateEntry.bind(this));
 
         this._display.hotkeyHandler.registerActions([
             ['focusSearchBox', this._onActionFocusSearchBox.bind(this)],
@@ -155,6 +159,43 @@ export class SearchDisplayController {
     }
 
     // Private
+
+    /** @param {import('display').EventArgument<'contentUpdateEntry'>} details */
+    _onContentUpdateEntry({dictionaryEntry, element}) {
+        if (dictionaryEntry.type !== 'term') { return; }
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.dataset.action = 'copy-entry';
+        button.textContent = 'Copy';
+        button.title = 'Copy this result as plain text';
+        const status = document.createElement('div');
+        status.className = 'copy-entry-status';
+        status.setAttribute('role', 'status');
+        status.setAttribute('aria-live', 'polite');
+        element.appendChild(status);
+        querySelectorNotNull(element, '.actions').prepend(button);
+        button.addEventListener('click', () => {
+            try {
+                const {text, unresolvedImages} = getResultEntryText(dictionaryEntry);
+                if (text.length === 0) {
+                    status.textContent = 'No dictionary content to copy.';
+                    return;
+                }
+                this._copyingEntry = true;
+                let copied;
+                try {
+                    copied = this._display.copyText(text);
+                } finally {
+                    this._copyingEntry = false;
+                }
+                if (!copied) { throw new Error('Clipboard write failed'); }
+                this._clipboardMonitor.setPreviousText(text.trim());
+                status.textContent = unresolvedImages === 0 ? 'Copied.' : `Copied. ${unresolvedImages} unresolved image(s) omitted.`;
+            } catch (e) {
+                status.textContent = 'Could not copy this result. Please try again.';
+            }
+        });
+    }
 
     /** @type {import('extension').ChromeRuntimeOnMessageCallback<import('application').ApiMessageAny>} */
     _onMessage({action, params}, _sender, callback) {
@@ -318,6 +359,7 @@ export class SearchDisplayController {
 
     /** */
     async _onCopy() {
+        if (this._copyingEntry) { return; }
         // Ignore copy from search page
         this._clipboardMonitor.setPreviousText(document.hasFocus() ? await this._clipboardReaderLike.getText(false) : '');
     }
