@@ -38,6 +38,8 @@ export class CopyImageInspector {
         this._entry = null;
         /** @type {boolean} */
         this._saving = false;
+        this._dialog.addEventListener('keydown', (event) => { event.stopPropagation(); });
+        this._dialog.addEventListener('paste', (event) => { event.stopPropagation(); });
         this._dialog.addEventListener('close', () => {
             this._entry = null;
             this._releaseMedia();
@@ -67,7 +69,12 @@ export class CopyImageInspector {
         this._releaseMedia();
         const list = querySelectorNotNull(this._dialog, '#copy-image-inspector-list');
         list.textContent = '';
-        const images = new Map(this._controller.getCopyEntryText(this._entry).images.map((image) => [JSON.stringify([image.dictionary, image.revision, image.path]), image]));
+        /** @type {Map<string, import('./result-entry-text.js').CopyImageOutcome>} */
+        const images = new Map();
+        for (const image of this._controller.getCopyEntryText(this._entry).images) {
+            const key = JSON.stringify([image.dictionary, image.revision, image.path]);
+            if (images.get(key)?.handling !== 'unresolved') { images.set(key, image); }
+        }
         for (const image of images.values()) {
             if (!this._showAll.checked && image.handling !== 'unresolved') { continue; }
             list.appendChild(this._createCard(image));

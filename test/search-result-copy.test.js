@@ -642,6 +642,20 @@ test('Copy filters notes from dictionary tags merged during lookup', async ({win
     }
 });
 
+/**
+ * @param {API} api
+ * @param {import('settings').Options} optionsFull
+ */
+function mockRulePersistence(api, optionsFull) {
+    vi.spyOn(api, 'modifySettings').mockImplementation(async (targets) => {
+        for (const target of targets) {
+            if (target.action !== 'set') { throw new Error('Expected rule replacement'); }
+            new ObjectPropertyAccessor(optionsFull).set(ObjectPropertyAccessor.getPathArray(target.path), target.value);
+        }
+        return [{result: true}];
+    });
+}
+
 /** @param {unknown} value */
 async function importRules(value) {
     const input = /** @type {HTMLInputElement} */ (querySelectorNotNull(document, '#copy-image-rules-file'));
@@ -753,13 +767,7 @@ for (const [name, document] of invalidRuleDocuments) {
 
 test('Export includes inactive and uninstalled rules; empty import clears seeds without resurrection', async ({window}) => {
     const {api, optionsFull, clipboard, render} = await setupSearch();
-    vi.spyOn(api, 'modifySettings').mockImplementation(async (targets) => {
-        for (const target of targets) {
-            if (target.action !== 'set') { throw new Error('Expected rule replacement'); }
-            new ObjectPropertyAccessor(optionsFull).set(ObjectPropertyAccessor.getPathArray(target.path), target.value);
-        }
-        return [{result: true}];
-    });
+    mockRulePersistence(api, optionsFull);
     const rules = [
         {dictionary: 'Dictionary A', revision: 'old', path: 'label.svg', action: 'replace', text: 'Inactive'},
         {dictionary: 'Uninstalled dictionary', revision: 'v1', path: 'photo.png', action: 'omit'},
@@ -803,13 +811,7 @@ test('Export includes inactive and uninstalled rules; empty import clears seeds 
 
 test('Dictionary updates disable old revision rules while preserving them in Export', async ({window}) => {
     const {api, application, optionsFull, clipboard, render} = await setupSearch();
-    vi.spyOn(api, 'modifySettings').mockImplementation(async (targets) => {
-        for (const target of targets) {
-            if (target.action !== 'set') { throw new Error('Expected rule replacement'); }
-            new ObjectPropertyAccessor(optionsFull).set(ObjectPropertyAccessor.getPathArray(target.path), target.value);
-        }
-        return [{result: true}];
-    });
+    mockRulePersistence(api, optionsFull);
     const rule = {dictionary: 'Dictionary A', revision: '2026-01', path: 'label.svg', action: 'replace', text: 'Current rule'};
     await importRules({version: 1, rules: [rule]});
     await render([createEntry('言葉', ['word', {type: 'structured-content',
@@ -924,13 +926,7 @@ test('Pending imports publish only after storage succeeds and preserve a concurr
 
 test('Copy stops using old revision rules immediately while a dictionary refresh is pending or fails', async ({window}) => {
     const {api, application, optionsFull, clipboard, render} = await setupSearch();
-    vi.spyOn(api, 'modifySettings').mockImplementation(async (targets) => {
-        for (const target of targets) {
-            if (target.action !== 'set') { throw new Error('Expected rule replacement'); }
-            new ObjectPropertyAccessor(optionsFull).set(ObjectPropertyAccessor.getPathArray(target.path), target.value);
-        }
-        return [{result: true}];
-    });
+    mockRulePersistence(api, optionsFull);
     await importRules({version: 1, rules: [{dictionary: 'Dictionary A', revision: '2026-01', path: 'label.svg', action: 'replace', text: 'Old revision text'}]});
     await render([createEntry('言葉', ['word', {type: 'image', path: 'label.svg', alt: 'Metadata'}])]);
     const button = /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '[data-action="copy-entry"]'));
@@ -950,13 +946,7 @@ test('Copy stops using old revision rules immediately while a dictionary refresh
 
 test('An older dictionary refresh response cannot restore superseded revision rules', async ({window}) => {
     const {api, application, optionsFull, clipboard, render} = await setupSearch();
-    vi.spyOn(api, 'modifySettings').mockImplementation(async (targets) => {
-        for (const target of targets) {
-            if (target.action !== 'set') { throw new Error('Expected rule replacement'); }
-            new ObjectPropertyAccessor(optionsFull).set(ObjectPropertyAccessor.getPathArray(target.path), target.value);
-        }
-        return [{result: true}];
-    });
+    mockRulePersistence(api, optionsFull);
     await importRules({version: 1,
         rules: [
             {dictionary: 'Dictionary A', revision: '2026-01', path: 'label.svg', action: 'replace', text: 'Old revision text'},
@@ -1033,17 +1023,80 @@ function setupInspectorBoundary(window) {
     return {create, revoke};
 }
 
+test('Inspector shows a duplicate asset as unresolved whenever any occurrence lacks metadata', async ({window}) => {
+    const {document} = window;
+    setupInspectorBoundary(window);
+    const {render} = await setupSearch();
+    await render([createEntry('言葉', [{type: 'structured-content',
+        content: [
+            'word ',
+            {tag: 'img', path: 'label.svg'},
+            {tag: 'img', path: 'label.svg', alt: 'Label'},
+            {tag: 'img', path: 'other.svg', alt: 'Other label'},
+            {tag: 'img', path: 'other.svg'},
+        ]}])]);
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(document, '[data-action="copy-entry"]')).click();
+    expect(querySelectorNotNull(document, '.copy-entry-status').textContent).toBe('Copied. 2 unresolved image(s) omitted.');
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(document, '[data-action="inspect-copy-images"]')).click();
+    expect(document.querySelectorAll('.copy-image-card')).toHaveLength(2);
+    expect([...document.querySelectorAll('.copy-image-handling')].map((element) => element.textContent)).toEqual(['Unresolved', 'Unresolved']);
+    expect([...document.querySelectorAll('.copy-image-path')].map((element) => element.textContent)).toEqual(['label.svg', 'other.svg']);
+    /** @type {HTMLInputElement} */ (querySelectorNotNull(document, '#copy-image-show-all')).click();
+    expect(document.querySelectorAll('.copy-image-card')).toHaveLength(2);
+});
+
+test('Inspector preserves native editing keys instead of running search hotkeys', async ({window}) => {
+    const {document} = window;
+    setupInspectorBoundary(window);
+    const {display, application, render} = await setupSearch();
+    display.hotkeyHandler.prepare(application.crossFrame);
+    display.hotkeyHandler.setHotkeys('search', ['Escape', 'ArrowDown', 'KeyK'].map((key) => ({
+        action: 'focusSearchBox', argument: '', key, modifiers: key === 'KeyK' ? ['ctrl', 'shift'] : [], scopes: ['search'], enabled: true,
+    })));
+    await render([createEntry('言葉', [{type: 'image', path: 'label.svg'}])]);
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(document, '[data-action="inspect-copy-images"]')).click();
+    const editor = /** @type {HTMLTextAreaElement} */ (querySelectorNotNull(document, '.copy-image-text'));
+    editor.focus();
+    for (const options of [
+        {key: 'Escape', code: 'Escape'},
+        {key: 'ArrowDown', code: 'ArrowDown'},
+        {key: 'K', code: 'KeyK', ctrlKey: true, shiftKey: true},
+        {key: 'u', code: 'KeyU', ctrlKey: true},
+    ]) {
+        const event = new KeyboardEvent('keydown', {bubbles: true, cancelable: true, ...options});
+        editor.dispatchEvent(event);
+        expect(event.defaultPrevented).toBe(false);
+        expect(document.activeElement).toBe(editor);
+    }
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(document, '#copy-image-inspector-close')).click();
+    const outside = new KeyboardEvent('keydown', {key: 'Escape', code: 'Escape', bubbles: true, cancelable: true});
+    document.dispatchEvent(outside);
+    expect(outside.defaultPrevented).toBe(true);
+    expect(document.activeElement).toBe(querySelectorNotNull(document, '#search-textbox'));
+});
+
+test('Inspector leaves native paste in its editor instead of replacing the search query', async ({window}) => {
+    const {document} = window;
+    setupInspectorBoundary(window);
+    const {api, render} = await setupSearch();
+    vi.spyOn(api, 'termsFind').mockResolvedValue({dictionaryEntries: [], originalTextLength: 0});
+    await render([createEntry('言葉', [{type: 'image', path: 'label.svg'}])]);
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(document, '[data-action="inspect-copy-images"]')).click();
+    const editor = /** @type {HTMLTextAreaElement} */ (querySelectorNotNull(document, '.copy-image-text'));
+    editor.focus();
+    const event = new Event('paste', {bubbles: true, cancelable: true});
+    Object.defineProperty(event, 'clipboardData', {value: {getData: () => 'Recovered label'}});
+    editor.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(false);
+    expect(/** @type {HTMLTextAreaElement} */ (querySelectorNotNull(document, '#search-textbox')).value).toBe('言葉');
+    expect(document.activeElement).toBe(editor);
+});
+
 test('Inspector saves replacement, edits omission, and deletes one rule without writing the clipboard', async ({window}) => {
     const {document} = window;
     setupInspectorBoundary(window);
     const {api, optionsFull, clipboard, copy, render} = await setupSearch();
-    vi.spyOn(api, 'modifySettings').mockImplementation(async (targets) => {
-        for (const target of targets) {
-            if (target.action !== 'set') { throw new Error('Expected rule replacement'); }
-            new ObjectPropertyAccessor(optionsFull).set(ObjectPropertyAccessor.getPathArray(target.path), target.value);
-        }
-        return [{result: true}];
-    });
+    mockRulePersistence(api, optionsFull);
     await render([createEntry('言葉', [{type: 'structured-content', content: ['before ', {tag: 'img', path: 'label.svg'}, ' after']}])]);
     /** @type {HTMLButtonElement} */ (querySelectorNotNull(document, '[data-action="inspect-copy-images"]')).click();
     /** @type {HTMLTextAreaElement} */ (querySelectorNotNull(document, '.copy-image-text')).value = 'Recovered label';
@@ -1099,13 +1152,7 @@ test('Inspector retains inactive revision rules until each current image is revi
     const {document} = window;
     setupInspectorBoundary(window);
     const {api, application, optionsFull, clipboard, render} = await setupSearch();
-    vi.spyOn(api, 'modifySettings').mockImplementation(async (targets) => {
-        for (const target of targets) {
-            if (target.action !== 'set') { throw new Error('Expected rule replacement'); }
-            new ObjectPropertyAccessor(optionsFull).set(ObjectPropertyAccessor.getPathArray(target.path), target.value);
-        }
-        return [{result: true}];
-    });
+    mockRulePersistence(api, optionsFull);
     await importRules({version: 1, rules: [{dictionary: 'Dictionary A', revision: 'old-revision', path: 'label.svg', action: 'replace', text: 'Old label'}]});
     await render([createEntry('言葉', ['word', {type: 'image', path: 'label.svg'}])]);
     /** @type {HTMLButtonElement} */ (querySelectorNotNull(document, '[data-action="inspect-copy-images"]')).click();
