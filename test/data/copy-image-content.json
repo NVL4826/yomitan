@@ -1,0 +1,35 @@
+{
+    "sample": [
+        {
+            "type": "structured-content",
+            "content": {
+                "tag": "details",
+                "content": [
+                    {"tag": "summary", "content": "亜"},
+                    {"tag": "img", "path": "smk8/一-fill.svg", "title": "一"},
+                    "㊀…に次ぐ。「亜流・亜熱帯」",
+                    {"tag": "br"},
+                    {"tag": "img", "path": "smk8/二-fill.svg", "title": "二"},
+                    "（略）アジア（亜細亜）。"
+                ]
+            }
+        }
+    ],
+    "labels": [
+        {"tag": "img", "path": "smk8/かぞえ方-default.svg"},
+        {"tag": "img", "path": "smk8/一-fill.svg"},
+        {"tag": "img", "path": "smk8/二-fill.svg"},
+        {"tag": "img", "path": "smk8/三-fill.svg"},
+        {"tag": "img", "path": "smk8/四-fill.svg"},
+        {"tag": "img", "path": "smk8/五-fill.svg"},
+        {"tag": "img", "path": "smk8/六-fill.svg"},
+        {"tag": "img", "path": "smk8/他動-default.svg"},
+        {"tag": "img", "path": "smk8/動-default.svg"},
+        {"tag": "img", "path": "smk8/名-default.svg"},
+        {"tag": "img", "path": "smk8/文法-red.svg"},
+        {"tag": "img", "path": "smk8/派-default.svg"},
+        {"tag": "img", "path": "smk8/自動-default.svg"},
+        {"tag": "img", "path": "smk8/表記-redfill.svg"},
+        {"tag": "img", "path": "smk8/運用-fill.svg"}
+    ]
+}

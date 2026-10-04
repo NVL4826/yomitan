@@ -18,7 +18,9 @@
 import {IDBFactory, IDBKeyRange} from 'fake-indexeddb';
 import JSZip from 'jszip';
 import {Blob} from 'node:buffer';
+import {readFileSync} from 'node:fs';
 import {expect, vi} from 'vitest';
+import {parseJson} from '../ext/js/core/json.js';
 import {Application} from '../ext/js/application.js';
 import {API} from '../ext/js/comm/api.js';
 import {CrossFrameAPI} from '../ext/js/comm/cross-frame-api.js';
@@ -42,6 +44,11 @@ import {setupStubs} from './utilities/database.js';
 import {createFindTermsOptions} from './utilities/translator.js';
 
 const test = createDomTest('ext/search.html');
+
+// Trimmed from the supplied SMK8 亜 entry; label paths verified against the supplied SVG text.
+const imageFixtures = /** @type {{sample: import('dictionary-data').TermGlossaryContent[], labels: import('structured-content').ImageElement[]}} */ (
+    parseJson(readFileSync(new URL('data/copy-image-content.json', import.meta.url), 'utf8'))
+);
 
 /**
  * @param {string} term
@@ -212,7 +219,85 @@ test('Copy omits image assets, silently skips explicit illustrations, and counts
     expect(querySelectorNotNull(document, '.copy-entry-status').textContent).toBe('Copied. 4 unresolved image(s) omitted.');
 });
 
-test('Copy recognizes an explicit illustration after dictionary import and lookup', async ({window}) => {
+test('Copy recovers image metadata inline and keeps collapsed sample definitions', async ({window}) => {
+    const {document} = window;
+    const {clipboard, render} = await setupSearch();
+    const entry = createEntry('亜', [
+        ...imageFixtures.sample,
+        {type: 'structured-content',
+            content: [
+                'before ',
+                {tag: 'img', path: 'text.svg', alt: ' Alternative ', description: 'Wrong description', title: 'Wrong title'},
+                ' between ',
+                {tag: 'img', path: 'description.svg', alt: '  ', description: 'Description'},
+                ' after',
+                {tag: 'img', path: 'title.svg', title: 'Title label', data: {role: 'label'}},
+                {tag: 'img', path: 'photo.svg', alt: 'Do not copy a photo caption', data: {role: 'illustration'}},
+            ]},
+        {type: 'image', path: 'standalone.svg', description: 'Standalone description'},
+        {type: 'image', path: 'standalone-alt.svg', alt: 'Standalone alternative'},
+    ]);
+    entry.definitions[0].dictionary = '新明解国語辞典　第八版';
+    await render([entry]);
+    expect(querySelectorNotNull(document, 'details.gloss-sc-details').hasAttribute('open')).toBe(false);
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(document, '[data-action="copy-entry"]')).click();
+    expect(clipboard.text).toContain('一㊀…に次ぐ。「亜流・亜熱帯」\n二（略）アジア（亜細亜）。');
+    expect(clipboard.text).toContain('before Alternative between Description afterTitle label');
+    expect(clipboard.text).toContain('Standalone description\nStandalone alternative');
+    expect(clipboard.text).not.toMatch(/Wrong|photo caption|\.svg|Image|<svg/);
+    expect(querySelectorNotNull(document, '.copy-entry-status').textContent).toBe('Copied.');
+});
+
+test('Copy recovers verified SMK8 labels and counts only unsupported included images', async ({window}) => {
+    const {document} = window;
+    const {api, display, options, clipboard, render} = await setupSearch();
+    vi.spyOn(api, 'modifySettings').mockResolvedValue([{result: true}]);
+    options.dictionaries.push({...options.dictionaries[0], name: '新明解国語辞典　第八版'});
+    await display.updateOptions();
+    const entry = createEntry('亜', ['Other dictionary content', {type: 'structured-content',
+        content: [
+            {tag: 'img', path: 'smk8/表記-redfill.svg'},
+        ]}]);
+    entry.definitions.push({...entry.definitions[0],
+        dictionary: '新明解国語辞典　第八版',
+        entries: [
+            {type: 'structured-content', content: imageFixtures.labels.flatMap((image) => [image, '・'])},
+            {type: 'structured-content',
+                content: [
+                    'Before ',
+                    {tag: 'img', path: 'smk8/表記-redfill.svg', alt: 'Image', description: 'smk8/表記-redfill.svg', title: 'Open image'},
+                    ' after',
+                    {tag: 'img', path: 'smk8/gaiji/G655F.svg'},
+                    {tag: 'img', path: 'smk8/unknown.svg', title: 'Arbitrary hover title'},
+                    {tag: 'img', path: 'other/表記-redfill.svg'},
+                    {tag: 'img', path: 'smk8/unknown.svg', alt: 'https://example.com/image.svg'},
+                    {tag: 'img', path: 'smk8/photo.svg', title: 'A photo', data: {role: 'illustration'}},
+                ]},
+            {type: 'image', path: 'smk8/運用-fill.svg'},
+        ]});
+    const original = structuredClone(entry);
+    await render([entry]);
+    const button = /** @type {HTMLButtonElement} */ (querySelectorNotNull(document, '[data-action="copy-entry"]'));
+    button.click();
+    expect(clipboard.text).toContain('かぞえ方・一・二・三・四・五・六・他動・動・名・文法・派・自動・表記・運用・');
+    expect(clipboard.text).toContain('Before 表記 after\n運用');
+    expect(clipboard.text).not.toMatch(/\.svg|https:|Arbitrary|Open image|A photo|Image|<svg/);
+    expect(querySelectorNotNull(document, '.copy-entry-status').textContent).toBe('Copied. 5 unresolved image(s) omitted.');
+    /** @type {HTMLInputElement} */ (querySelectorNotNull(document, '#copy-dictionaries input[data-dictionary="新明解国語辞典　第八版"]')).click();
+    button.click();
+    expect(clipboard.text).toContain('Other dictionary content');
+    expect(clipboard.text).not.toMatch(/表記|運用|かぞえ方|新明解/);
+    expect(querySelectorNotNull(document, '.copy-entry-status').textContent).toBe('Copied. 1 unresolved image(s) omitted.');
+    /** @type {HTMLInputElement} */ (querySelectorNotNull(document, '#copy-dictionaries input[data-dictionary="Dictionary A"]')).click();
+    /** @type {HTMLInputElement} */ (querySelectorNotNull(document, '#copy-dictionaries input[data-dictionary="新明解国語辞典　第八版"]')).click();
+    button.click();
+    expect(clipboard.text).toContain('Before 表記 after');
+    expect(clipboard.text).not.toContain('Other dictionary content');
+    expect(querySelectorNotNull(document, '.copy-entry-status').textContent).toBe('Copied. 4 unresolved image(s) omitted.');
+    expect(entry).toEqual(original);
+});
+
+test('Copy preserves image metadata and illustration roles after dictionary import and lookup', async ({window}) => {
     const {document} = window;
     const {clipboard, render} = await setupSearch();
     setupStubs();
@@ -227,8 +312,14 @@ test('Copy recognizes an explicit illustration after dictionary import and looku
             'word',
             {tag: 'img', path: 'image.svg', data: {role: 'illustration'}},
             {tag: 'img', path: 'image.svg'},
+            {tag: 'img', path: 'image.svg', alt: 'Structured alternative'},
+            {tag: 'img', path: 'image.svg', description: 'Structured description'},
+            {tag: 'img', path: 'image.svg', title: 'Structured title', data: {role: 'text'}},
         ],
-    }], 1, '']]));
+    },
+    {type: 'image', path: 'image.svg', alt: 'Standalone alternative'},
+    {type: 'image', path: 'image.svg', description: 'Standalone description'},
+    {type: 'image', path: 'image.svg', title: 'Arbitrary standalone hover title'}], 1, '']]));
     archive.file('image.svg', '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>');
     const database = new DictionaryDatabase();
     await database.prepare();
@@ -244,8 +335,9 @@ test('Copy recognizes an explicit illustration after dictionary import and looku
         const {dictionaryEntries} = await translator.findTerms('group', '言葉', options);
         await render(dictionaryEntries);
         /** @type {HTMLButtonElement} */ (querySelectorNotNull(document, 'button[data-action="copy-entry"]')).click();
-        expect(clipboard.text).toContain('word');
-        expect(querySelectorNotNull(document, '.copy-entry-status').textContent).toBe('Copied. 1 unresolved image(s) omitted.');
+        expect(clipboard.text).toContain('wordStructured alternativeStructured descriptionStructured title\nStandalone alternative\nStandalone description');
+        expect(clipboard.text).not.toMatch(/Arbitrary|\.svg|Image/);
+        expect(querySelectorNotNull(document, '.copy-entry-status').textContent).toBe('Copied. 2 unresolved image(s) omitted.');
     } finally {
         await database.close();
     }

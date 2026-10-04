@@ -15,6 +15,25 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+// Exact paths and text verified from the supplied SMK8 label SVGs.
+const smk8Labels = new Map([
+    ['smk8/かぞえ方-default.svg', 'かぞえ方'],
+    ['smk8/一-fill.svg', '一'],
+    ['smk8/二-fill.svg', '二'],
+    ['smk8/三-fill.svg', '三'],
+    ['smk8/四-fill.svg', '四'],
+    ['smk8/五-fill.svg', '五'],
+    ['smk8/六-fill.svg', '六'],
+    ['smk8/他動-default.svg', '他動'],
+    ['smk8/動-default.svg', '動'],
+    ['smk8/名-default.svg', '名'],
+    ['smk8/文法-red.svg', '文法'],
+    ['smk8/派-default.svg', '派'],
+    ['smk8/自動-default.svg', '自動'],
+    ['smk8/表記-redfill.svg', '表記'],
+    ['smk8/運用-fill.svg', '運用'],
+]);
+
 /**
  * @param {import('dictionary').TermDictionaryEntry} entry
  * @param {Set<string>} [excludedDictionaries]
@@ -59,10 +78,10 @@ export function getResultEntryText(entry, excludedDictionaries = new Set()) {
                         lines.push(content.text);
                         break;
                     case 'image':
-                        ++imageState.unresolvedImages;
+                        lines.push(getImageText(content, definition.dictionary, imageState));
                         break;
                     case 'structured-content':
-                        lines.push(getStructuredContentText(content.content, imageState));
+                        lines.push(getStructuredContentText(content.content, definition.dictionary, imageState));
                         break;
                 }
             }
@@ -125,22 +144,21 @@ function getTagsText(tags, excludedDictionaries = new Set(), sourceDictionary) {
 
 /**
  * @param {import('structured-content').Content|undefined} content
+ * @param {string} dictionary
  * @param {{unresolvedImages: number}} imageState
  * @returns {string}
  */
-function getStructuredContentText(content, imageState) {
+function getStructuredContentText(content, dictionary, imageState) {
     if (typeof content === 'string') { return content; }
     if (typeof content === 'undefined') { return ''; }
-    if (Array.isArray(content)) { return content.map((item) => getStructuredContentText(item, imageState)).join(''); }
+    if (Array.isArray(content)) { return content.map((item) => getStructuredContentText(item, dictionary, imageState)).join(''); }
     const {tag} = content;
     if (tag === 'img') {
-        // Only an explicit dictionary role establishes that an image is illustrative.
-        if (content.data?.role !== 'illustration') { ++imageState.unresolvedImages; }
-        return '';
+        return getImageText(content, dictionary, imageState);
     }
     if (tag === 'br') { return '\n'; }
     if (tag === 'rp') { return ''; }
-    const text = getStructuredContentText(content.content, imageState);
+    const text = getStructuredContentText(content.content, dictionary, imageState);
     switch (tag) {
         case 'rt': return `(${text})`;
         case 'td':
@@ -158,4 +176,27 @@ function getStructuredContentText(content, imageState) {
         case 'tr': return `\n${text}\n`;
         default: return text;
     }
+}
+
+/**
+ * @param {import('structured-content').ImageElementBase} image
+ * @param {string} dictionary
+ * @param {{unresolvedImages: number}} imageState
+ * @returns {string}
+ */
+function getImageText(image, dictionary, imageState) {
+    const {path, alt, description, title, data} = image;
+    if (data?.role === 'illustration') { return ''; }
+    const label = dictionary === '新明解国語辞典　第八版' ? smk8Labels.get(path) : void 0;
+    // Hover titles alone do not establish equivalent content; require a textual role or a verified label.
+    const textTitle = data?.role === 'text' || data?.role === 'label' || (typeof label === 'string' && title?.trim() === label) ? title : void 0;
+    for (const value of [alt, description, textTitle]) {
+        if (typeof value !== 'string') { continue; }
+        const text = value.trim();
+        if (text.length === 0 || text === path || /^(?:image|img|picture|photo)$/i.test(text) || /(?:https?:|data:|blob:|<[^>]*>|\.(?:svg|png|jpe?g|gif|webp|bmp|avif)(?:$|[?#]))/i.test(text)) { continue; }
+        return text;
+    }
+    if (typeof label === 'string') { return label; }
+    ++imageState.unresolvedImages;
+    return '';
 }
