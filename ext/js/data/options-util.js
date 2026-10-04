@@ -19,7 +19,7 @@
 import {fetchJson, fetchText} from '../core/fetch-utilities.js';
 import {parseJson} from '../core/json.js';
 import {isObjectNotArray} from '../core/object-utilities.js';
-import {escapeRegExp} from '../core/utilities.js';
+import {clone, escapeRegExp} from '../core/utilities.js';
 import {TemplatePatcher} from '../templates/template-patcher.js';
 import {JsonSchema} from './json-schema.js';
 
@@ -35,6 +35,8 @@ export class OptionsUtil {
         this._templatePatcher = null;
         /** @type {?JsonSchema} */
         this._optionsSchema = null;
+        /** @type {import('settings').CopyImageRule[]} */
+        this._copyImageRuleSeed = [];
     }
 
     /** */
@@ -42,6 +44,9 @@ export class OptionsUtil {
         /** @type {import('ext/json-schema').Schema} */
         const schema = await fetchJson('/data/schemas/options-schema.json');
         this._optionsSchema = new JsonSchema(schema);
+        /** @type {import('settings').CopyImageRuleDocument} */
+        const seed = await fetchJson('/data/copy-image-rules.json');
+        this._copyImageRuleSeed = seed.rules;
     }
 
     /**
@@ -168,6 +173,7 @@ export class OptionsUtil {
         const optionsVersion = this._getVersionUpdates(null).length;
         const options = /** @type {import('settings').Options} */ (/** @type {JsonSchema} */ (this._optionsSchema).getValidValueOrDefault());
         options.version = optionsVersion;
+        options.global.copyImageRules = clone(this._copyImageRuleSeed);
         return options;
     }
 
@@ -590,6 +596,7 @@ export class OptionsUtil {
             this._updateVersion76,
             this._updateVersion77,
             this._updateVersion78,
+            this._updateVersion79,
         ];
         /* eslint-enable @typescript-eslint/unbound-method */
         if (typeof targetVersion === 'number' && targetVersion < result.length) {
@@ -1868,6 +1875,16 @@ export class OptionsUtil {
     _updateVersion78(options) {
         for (const profile of options.profiles) {
             profile.options.general.copyExcludedDictionaries = [];
+        }
+    }
+
+    /**
+     * - Initialized the global editable image copy rule collection once.
+     * @type {import('options-util').UpdateFunction}
+     */
+    _updateVersion79(options) {
+        if (typeof options.global.copyImageRules === 'undefined') {
+            options.global.copyImageRules = clone(this._copyImageRuleSeed);
         }
     }
 

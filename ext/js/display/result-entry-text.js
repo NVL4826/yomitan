@@ -15,35 +15,22 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-// Exact paths and text verified from the supplied SMK8 label SVGs.
-const smk8Labels = new Map([
-    ['smk8/かぞえ方-default.svg', 'かぞえ方'],
-    ['smk8/一-fill.svg', '一'],
-    ['smk8/二-fill.svg', '二'],
-    ['smk8/三-fill.svg', '三'],
-    ['smk8/四-fill.svg', '四'],
-    ['smk8/五-fill.svg', '五'],
-    ['smk8/六-fill.svg', '六'],
-    ['smk8/他動-default.svg', '他動'],
-    ['smk8/動-default.svg', '動'],
-    ['smk8/名-default.svg', '名'],
-    ['smk8/文法-red.svg', '文法'],
-    ['smk8/派-default.svg', '派'],
-    ['smk8/自動-default.svg', '自動'],
-    ['smk8/表記-redfill.svg', '表記'],
-    ['smk8/運用-fill.svg', '運用'],
-]);
-
 /**
  * @param {import('dictionary').TermDictionaryEntry} entry
  * @param {Set<string>} [excludedDictionaries]
- * @returns {{text: string, unresolvedImages: number}}
+ * @param {import('settings').CopyImageRule[]} [rules]
+ * @param {Map<string, string>} [revisions]
+ * @returns {{text: string, unresolvedImages: number, images: CopyImageOutcome[]}}
  */
-export function getResultEntryText(entry, excludedDictionaries = new Set()) {
+export function getResultEntryText(entry, excludedDictionaries = new Set(), rules = [], revisions = new Map()) {
     const headwords = entry.headwords.map(({term, reading}) => (term === reading || reading.length === 0 ? term : `${term} (${reading})`));
     /** @type {Map<string, string[]>} */
     const sections = new Map();
-    const imageState = {unresolvedImages: 0};
+    /** @type {ImageState} */
+    const imageState = {unresolvedImages: 0,
+        images: [],
+        revisions,
+        rules: new Map(rules.map((rule) => [JSON.stringify([rule.dictionary, rule.revision, rule.path]), rule]))};
     /**
      * @param {string} dictionary
      * @param {string} text
@@ -68,6 +55,7 @@ export function getResultEntryText(entry, excludedDictionaries = new Set()) {
     }
     for (const definition of entry.definitions) {
         if (excludedDictionaries.has(definition.dictionary)) { continue; }
+        const imageStart = imageState.images.length;
         const lines = [];
         for (const content of definition.entries) {
             if (typeof content === 'string') {
@@ -87,6 +75,7 @@ export function getResultEntryText(entry, excludedDictionaries = new Set()) {
             }
         }
         const text = lines.join('\n').trim();
+        for (const image of imageState.images.slice(imageStart)) { image.context = text; }
         const tags = getTagsText(definition.tags, excludedDictionaries);
         if (text.length === 0 && tags.length === 0) { continue; }
         const variants = definition.headwordIndices.map((index) => headwords[index]).join(', ');
@@ -120,7 +109,7 @@ export function getResultEntryText(entry, excludedDictionaries = new Set()) {
                 ...[...sections].map(([dictionary, lines]) => `${dictionary}\n${lines.join('\n\n')}`),
             ].join('\n\n')
     );
-    return {text, unresolvedImages: imageState.unresolvedImages};
+    return {text, unresolvedImages: imageState.unresolvedImages, images: imageState.images};
 }
 
 /**
@@ -145,7 +134,7 @@ function getTagsText(tags, excludedDictionaries = new Set(), sourceDictionary) {
 /**
  * @param {import('structured-content').Content|undefined} content
  * @param {string} dictionary
- * @param {{unresolvedImages: number}} imageState
+ * @param {ImageState} imageState
  * @returns {string}
  */
 function getStructuredContentText(content, dictionary, imageState) {
@@ -181,22 +170,40 @@ function getStructuredContentText(content, dictionary, imageState) {
 /**
  * @param {import('structured-content').ImageElementBase} image
  * @param {string} dictionary
- * @param {{unresolvedImages: number}} imageState
+ * @param {ImageState} imageState
  * @returns {string}
  */
 function getImageText(image, dictionary, imageState) {
     const {path, alt, description, title, data} = image;
-    if (data?.role === 'illustration') { return ''; }
-    const label = dictionary === '新明解国語辞典　第八版' ? smk8Labels.get(path) : void 0;
-    // Hover titles alone do not establish equivalent content; require a textual role or a verified label.
-    const textTitle = data?.role === 'text' || data?.role === 'label' || (typeof label === 'string' && title?.trim() === label) ? title : void 0;
+    const revision = imageState.revisions.get(dictionary) ?? '';
+    const rule = imageState.rules.get(JSON.stringify([dictionary, revision, path]));
+    /** @type {CopyImageOutcome} */
+    const outcome = {dictionary, revision, path, handling: 'unresolved', text: '', context: ''};
+    imageState.images.push(outcome);
+    if (typeof rule !== 'undefined') {
+        outcome.handling = rule.action === 'replace' ? 'user-replacement' : 'user-omission';
+        outcome.text = rule.action === 'replace' ? rule.text : '';
+        return outcome.text;
+    }
+    if (data?.role === 'illustration') {
+        outcome.handling = 'illustration';
+        return '';
+    }
+    // Hover titles alone do not establish equivalent content; require a textual role.
+    const textTitle = data?.role === 'text' || data?.role === 'label' ? title : void 0;
     for (const value of [alt, description, textTitle]) {
         if (typeof value !== 'string') { continue; }
         const text = value.trim();
         if (text.length === 0 || text === path || /^(?:image|img|picture|photo)$/i.test(text) || /(?:https?:|data:|blob:|<[^>]*>|\.(?:svg|png|jpe?g|gif|webp|bmp|avif)(?:$|[?#]))/i.test(text)) { continue; }
+        outcome.handling = 'metadata';
+        outcome.text = text;
         return text;
     }
-    if (typeof label === 'string') { return label; }
     ++imageState.unresolvedImages;
     return '';
 }
+
+/**
+ * @typedef {{dictionary: string, revision: string, path: string, handling: 'user-replacement'|'user-omission'|'metadata'|'illustration'|'unresolved', text: string, context: string}} CopyImageOutcome
+ * @typedef {{unresolvedImages: number, images: CopyImageOutcome[], rules: Map<string, import('settings').CopyImageRule>, revisions: Map<string, string>}} ImageState
+ */
