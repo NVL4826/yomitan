@@ -21,6 +21,7 @@ import {Blob} from 'node:buffer';
 import {readFileSync} from 'node:fs';
 import {expect, vi} from 'vitest';
 import {parseJson} from '../ext/js/core/json.js';
+import {Backend} from '../ext/js/background/backend.js';
 import {Application} from '../ext/js/application.js';
 import {API} from '../ext/js/comm/api.js';
 import {CrossFrameAPI} from '../ext/js/comm/cross-frame-api.js';
@@ -102,7 +103,7 @@ async function setupSearch(monitor = false, pageType = 'search', savedOptions) {
     const optionsUtil = new OptionsUtil();
     await optionsUtil.prepare();
     const optionsFull = savedOptions ?? optionsUtil.getDefault();
-    const options = optionsFull.profiles[0].options;
+    const options = optionsFull.profiles[optionsFull.profileCurrent].options;
     options.scanning.enableOnSearchPage = false;
     options.general.enableWanakana = false;
     options.parsing.enableScanningParser = false;
@@ -115,7 +116,10 @@ async function setupSearch(monitor = false, pageType = 'search', savedOptions) {
     vi.spyOn(api, 'optionsGetFull').mockResolvedValue(optionsFull);
     vi.spyOn(api, 'getEnvironmentInfo').mockResolvedValue({browser: 'firefox', platform: {os: 'linux'}});
     vi.spyOn(api, 'getLanguageSummaries').mockResolvedValue([]);
-    vi.spyOn(api, 'getDictionaryInfo').mockResolvedValue([]);
+    vi.spyOn(api, 'getDictionaryInfo').mockResolvedValue([
+        {title: 'Dictionary A', revision: '2026-01', sequenced: true, version: 3, importDate: 0, prefixWildcardsSupported: false, styles: ''},
+        {title: '新明解国語辞典　第八版', revision: 'smk8;2023-07-09', sequenced: true, version: 3, importDate: 0, prefixWildcardsSupported: false, styles: ''},
+    ]);
     vi.spyOn(api, 'parseText').mockResolvedValue([]);
     vi.spyOn(api, 'drawMedia').mockImplementation(() => {});
     const clipboard = {text: 'previous clipboard'};
@@ -635,4 +639,344 @@ test('Copy filters notes from dictionary tags merged during lookup', async ({win
     } finally {
         await database.close();
     }
+});
+
+/** @param {unknown} value */
+async function importRules(value) {
+    const input = /** @type {HTMLInputElement} */ (querySelectorNotNull(document, '#copy-image-rules-file'));
+    Object.defineProperty(input, 'files', {configurable: true, value: [new File([typeof value === 'string' ? value : JSON.stringify(value)], 'rules.json', {type: 'application/json'})]});
+    input.dispatchEvent(new Event('change'));
+    await vi.waitFor(() => { expect(querySelectorNotNull(document, '#copy-options-status').textContent).not.toBe(''); });
+}
+
+test('Import replaces global rules and Copy uses exact revision rules before metadata', async ({window}) => {
+    const {api, optionsFull, clipboard, render} = await setupSearch();
+    vi.spyOn(api, 'modifySettings').mockImplementation(async (targets) => {
+        for (const target of targets) {
+            expect(target.scope).toBe('global');
+            if (target.action !== 'set') { throw new Error('Expected rule replacement'); }
+            new ObjectPropertyAccessor(optionsFull).set(ObjectPropertyAccessor.getPathArray(target.path), target.value);
+        }
+        return [{result: true}];
+    });
+    await render([createEntry('言葉', [{type: 'structured-content',
+        content: [
+            'Before ',
+            {tag: 'img', path: 'label.svg', alt: 'Metadata'},
+            ' after ',
+            {tag: 'img', path: 'photo.svg', alt: 'Caption'},
+        ]}])]);
+    await importRules({version: 1,
+        rules: [
+            {dictionary: 'Dictionary A', revision: '2026-01', path: 'label.svg', action: 'replace', text: '<plain text>'},
+            {dictionary: 'Dictionary A', revision: '2026-01', path: 'photo.svg', action: 'omit'},
+        ]});
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '[data-action="copy-entry"]')).click();
+    expect(clipboard.text).toContain('Before <plain text> after');
+    expect(clipboard.text).not.toMatch(/Metadata|Caption/);
+    expect(querySelectorNotNull(window.document, '.copy-entry-status').textContent).toBe('Copied.');
+    expect(optionsFull.global).toHaveProperty('copyImageRules', [
+        {dictionary: 'Dictionary A', revision: '2026-01', path: 'label.svg', action: 'replace', text: '<plain text>'},
+        {dictionary: 'Dictionary A', revision: '2026-01', path: 'photo.svg', action: 'omit'},
+    ]);
+});
+
+test('A rejected storage write preserves effective rules after importing and reloading settings', async ({window}) => {
+    const {api, display, optionsFull, clipboard, render} = await setupSearch();
+    const backend = new Backend(new WebExtension());
+    // eslint-disable-next-line no-underscore-dangle
+    await backend._optionsUtil.prepare();
+    optionsFull.global.copyImageRules = [{dictionary: 'Dictionary A', revision: '2026-01', path: 'label.svg', action: 'replace', text: 'Saved text'}];
+    // eslint-disable-next-line no-underscore-dangle
+    backend._options = structuredClone(optionsFull);
+    vi.spyOn(api, 'optionsGetFull').mockImplementation(async () => new Promise((resolve, reject) => {
+        // eslint-disable-next-line no-underscore-dangle
+        backend._onMessage({action: 'optionsGetFull', params: void 0}, {}, (response) => {
+            const result = /** @type {import('core').Response<import('settings').Options>} */ (response);
+            if (typeof result.error !== 'undefined') {
+                reject(new Error('Could not reload settings'));
+            } else {
+                resolve(/** @type {import('settings').Options} */ (result.result));
+            }
+        });
+    }));
+    vi.stubGlobal('chrome', {...globalThis.chrome,
+        runtime: {...globalThis.chrome.runtime,
+            // eslint-disable-next-line no-underscore-dangle
+            sendMessage: (/** @type {import('api').ApiMessageAny} */ message, /** @type {(response?: unknown) => void} */ callback) => { backend._onMessage(message, {}, callback); }},
+        storage: {local: {
+            set: (/** @type {unknown} */ _values, /** @type {() => void} */ callback) => {
+                Object.defineProperty(globalThis.chrome.runtime, 'lastError', {configurable: true, value: {message: 'Storage unavailable'}});
+                callback();
+                Object.defineProperty(globalThis.chrome.runtime, 'lastError', {configurable: true, value: void 0});
+            },
+        }}});
+    await display.updateOptions();
+    await render([createEntry('言葉', ['word', {type: 'image', path: 'label.svg'}])]);
+    await importRules({version: 1, rules: [{dictionary: 'Dictionary A', revision: '2026-01', path: 'label.svg', action: 'replace', text: 'Rejected text'}]});
+    expect(querySelectorNotNull(window.document, '#copy-options-status').textContent).toContain('Storage unavailable');
+    expect((await api.optionsGetFull()).global.copyImageRules).toEqual(optionsFull.global.copyImageRules);
+    await display.updateOptions();
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '[data-action="copy-entry"]')).click();
+    expect(clipboard.text).toContain('Saved text');
+    expect(clipboard.text).not.toContain('Rejected text');
+});
+
+const invalidRuleDocuments = /** @type {[string, unknown][]} */ ([
+    ['malformed JSON', '{'],
+    ['unsupported version', {version: 2, rules: []}],
+    ['non-array rules', {version: 1, rules: {}}],
+    ['missing identity', {version: 1, rules: [{dictionary: 'Dictionary A', revision: '', path: 'label.svg', action: 'omit'}]}],
+    ['empty replacement', {version: 1, rules: [{dictionary: 'Dictionary A', revision: '2026-01', path: 'label.svg', action: 'replace', text: '  '}]}],
+    ['unknown action', {version: 1, rules: [{dictionary: 'Dictionary A', revision: '2026-01', path: 'label.svg', action: 'guess'}]}],
+    ['omission with text', {version: 1, rules: [{dictionary: 'Dictionary A', revision: '2026-01', path: 'label.svg', action: 'omit', text: 'wrong'}]}],
+    ['duplicate identity', {version: 1,
+        rules: [
+            {dictionary: 'Dictionary A', revision: '2026-01', path: 'label.svg', action: 'omit'},
+            {dictionary: 'Dictionary A', revision: '2026-01', path: 'label.svg', action: 'replace', text: 'duplicate'},
+        ]}],
+]);
+for (const [name, document] of invalidRuleDocuments) {
+    test(`Import rejects ${name} without changing the effective collection`, async ({window}) => {
+        const {api, clipboard, render} = await setupSearch();
+        const save = vi.spyOn(api, 'modifySettings');
+        await render([createEntry('亜', ['word', {type: 'image', path: 'smk8/表記-redfill.svg'}])]);
+        await importRules(document);
+        expect(querySelectorNotNull(window.document, '#copy-options-status').textContent).toContain('Could not import');
+        expect(save).not.toHaveBeenCalled();
+        /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '[data-action="copy-entry"]')).click();
+        expect(clipboard.text).toContain('word');
+        expect(querySelectorNotNull(window.document, '.copy-entry-status').textContent).toContain('1 unresolved');
+    });
+}
+
+test('Export includes inactive and uninstalled rules; empty import clears seeds without resurrection', async ({window}) => {
+    const {api, optionsFull, clipboard, render} = await setupSearch();
+    vi.spyOn(api, 'modifySettings').mockImplementation(async (targets) => {
+        for (const target of targets) {
+            if (target.action !== 'set') { throw new Error('Expected rule replacement'); }
+            new ObjectPropertyAccessor(optionsFull).set(ObjectPropertyAccessor.getPathArray(target.path), target.value);
+        }
+        return [{result: true}];
+    });
+    const rules = [
+        {dictionary: 'Dictionary A', revision: 'old', path: 'label.svg', action: 'replace', text: 'Inactive'},
+        {dictionary: 'Uninstalled dictionary', revision: 'v1', path: 'photo.png', action: 'omit'},
+    ];
+    await importRules({version: 1, rules});
+    /** @type {Blob | null} */
+    let exported = null;
+    window.URL.createObjectURL = vi.fn((/** @type {Blob|MediaSource} */ blob) => {
+        exported = /** @type {Blob} */ (blob);
+        return 'blob:rules';
+    });
+    const revoke = vi.fn();
+    window.URL.revokeObjectURL = revoke;
+    let filename = '';
+    /** @this {HTMLAnchorElement} */
+    function download() { filename = this.download; }
+    vi.spyOn(window.HTMLAnchorElement.prototype, 'click').mockImplementation(download);
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '#copy-image-rules-export')).click();
+    expect(filename).toBe('yomitan-copy-image-rules.json');
+    const text = await new Promise((/** @type {(value: string) => void} */ resolve) => {
+        const reader = new FileReader();
+        reader.onload = () => { resolve(/** @type {string} */ (reader.result)); };
+        reader.readAsText(/** @type {Blob} */ (exported));
+    });
+    expect(parseJson(text)).toEqual({version: 1, rules});
+    await vi.waitFor(() => { expect(revoke).toHaveBeenCalledWith('blob:rules'); }, {timeout: 2000});
+    await importRules(text);
+    expect(optionsFull.global.copyImageRules).toEqual(rules);
+    await importRules({version: 1, rules: []});
+    const util = new OptionsUtil();
+    await util.prepare();
+    const reloaded = await util.update(structuredClone(optionsFull));
+    expect(reloaded.global.copyImageRules).toEqual([]);
+    const entry = createEntry('亜', ['word', {type: 'image', path: 'smk8/表記-redfill.svg'}]);
+    entry.definitions[0].dictionary = '新明解国語辞典　第八版';
+    await render([entry]);
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '[data-action="copy-entry"]')).click();
+    expect(clipboard.text).not.toContain('表記');
+    expect(querySelectorNotNull(window.document, '.copy-entry-status').textContent).toContain('1 unresolved');
+});
+
+test('Dictionary updates disable old revision rules while preserving them in Export', async ({window}) => {
+    const {api, application, optionsFull, clipboard, render} = await setupSearch();
+    vi.spyOn(api, 'modifySettings').mockImplementation(async (targets) => {
+        for (const target of targets) {
+            if (target.action !== 'set') { throw new Error('Expected rule replacement'); }
+            new ObjectPropertyAccessor(optionsFull).set(ObjectPropertyAccessor.getPathArray(target.path), target.value);
+        }
+        return [{result: true}];
+    });
+    const rule = {dictionary: 'Dictionary A', revision: '2026-01', path: 'label.svg', action: 'replace', text: 'Current rule'};
+    await importRules({version: 1, rules: [rule]});
+    await render([createEntry('言葉', ['word', {type: 'structured-content',
+        content: [
+            {tag: 'img', path: 'label.svg', alt: 'Metadata'}, {tag: 'img', path: 'other/label.svg', alt: 'Other path'},
+        ]}])]);
+    const copyButton = /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '[data-action="copy-entry"]'));
+    copyButton.click();
+    expect(clipboard.text).toContain('Current ruleOther path');
+    vi.spyOn(api, 'getDictionaryInfo').mockResolvedValue([{title: 'Dictionary A', revision: '2026-02', sequenced: true, version: 3, importDate: 0, prefixWildcardsSupported: false, styles: ''}]);
+    application.trigger('databaseUpdated', {type: 'dictionary', cause: 'import'});
+    await vi.waitFor(() => {
+        copyButton.click();
+        expect(clipboard.text).toContain('MetadataOther path');
+    });
+    expect(optionsFull.global.copyImageRules).toEqual([rule]);
+});
+
+test('Imported global rules survive settings reload, full settings backup update, and a different active profile', async ({window}) => {
+    const {api, optionsFull} = await setupSearch();
+    const util = new OptionsUtil();
+    await util.prepare();
+    /** @type {Record<string, unknown>} */
+    let storage = {};
+    vi.stubGlobal('chrome', {...globalThis.chrome,
+        storage: {local: {
+            set: (/** @type {Record<string, unknown>} */ values, /** @type {() => void} */ callback) => { storage = values; callback(); },
+            get: (/** @type {string[]} */ _keys, /** @type {(values: Record<string, unknown>) => void} */ callback) => { callback(storage); },
+        }}});
+    vi.spyOn(api, 'modifySettings').mockImplementation(async (targets) => {
+        for (const target of targets) {
+            if (target.action !== 'set') { throw new Error('Expected rule replacement'); }
+            new ObjectPropertyAccessor(optionsFull).set(ObjectPropertyAccessor.getPathArray(target.path), target.value);
+        }
+        await util.save(optionsFull);
+        return [{result: true}];
+    });
+    const rule = {dictionary: 'Dictionary A', revision: '2026-01', path: 'label.svg', action: 'replace', text: 'Shared saved rule'};
+    await importRules({version: 1, rules: [rule]});
+    const loaded = await util.load();
+    expect(loaded.global.copyImageRules).toEqual([rule]);
+    const fromFullBackup = await util.update(parseJson(/** @type {string} */ (storage.options)));
+    expect(fromFullBackup.global.copyImageRules).toEqual([rule]);
+    fromFullBackup.profiles.push({...structuredClone(fromFullBackup.profiles[0]), name: 'Other profile'});
+    fromFullBackup.profileCurrent = 1;
+    const settingsStorage = globalThis.chrome.storage;
+    const previousSelect = querySelectorNotNull(window.document, '#profile-select');
+    previousSelect.replaceWith(previousSelect.cloneNode(true));
+    const reopened = await setupSearch(false, 'search', fromFullBackup);
+    vi.stubGlobal('chrome', {...globalThis.chrome, storage: settingsStorage});
+    await reopened.render([createEntry('言葉', ['word', {type: 'image', path: 'label.svg', alt: 'Metadata'}])]);
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '[data-action="copy-entry"]')).click();
+    expect(reopened.clipboard.text).toContain('Shared saved rule');
+    expect(reopened.clipboard.text).not.toContain('Metadata');
+    vi.spyOn(reopened.api, 'modifySettings').mockImplementation(async (targets) => {
+        for (const target of targets) {
+            if (target.action !== 'set') { throw new Error('Expected profile selection'); }
+            new ObjectPropertyAccessor(fromFullBackup).set(ObjectPropertyAccessor.getPathArray(target.path), target.value);
+        }
+        await util.save(fromFullBackup);
+        return [{result: true}];
+    });
+    vi.spyOn(reopened.api, 'optionsGet').mockImplementation(async () => fromFullBackup.profiles[fromFullBackup.profileCurrent].options);
+    const select = /** @type {HTMLSelectElement} */ (querySelectorNotNull(window.document, '#profile-select'));
+    select.value = '0';
+    select.dispatchEvent(new Event('change'));
+    await vi.waitFor(() => { expect(fromFullBackup.profileCurrent).toBe(0); });
+    // The backend's options notification refreshes the active profile in an extension tab.
+    await reopened.display.updateOptions();
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '[data-action="copy-entry"]')).click();
+    expect(reopened.clipboard.text).toContain('Shared saved rule');
+});
+
+test('Pending imports publish only after storage succeeds and preserve a concurrent Copy filter save', async ({window}) => {
+    const {api, optionsFull} = await setupSearch();
+    const backend = new Backend(new WebExtension());
+    // eslint-disable-next-line no-underscore-dangle
+    await backend._optionsUtil.prepare();
+    // eslint-disable-next-line no-underscore-dangle
+    backend._options = structuredClone(optionsFull);
+    /** @type {{options: string, complete: () => void}[]} */
+    const writes = [];
+    vi.stubGlobal('chrome', {...globalThis.chrome,
+        runtime: {...globalThis.chrome.runtime,
+            // eslint-disable-next-line no-underscore-dangle
+            sendMessage: (/** @type {import('api').ApiMessageAny} */ message, /** @type {(response?: unknown) => void} */ callback) => { backend._onMessage(message, {}, callback); }},
+        tabs: {query: (/** @type {unknown} */ _details, /** @type {(tabs: chrome.tabs.Tab[]) => void} */ callback) => { callback([]); }},
+        storage: {local: {
+            set: (/** @type {{options: string}} */ values, /** @type {() => void} */ callback) => { writes.push({options: values.options, complete: callback}); },
+        }}});
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    vi.mocked(api.optionsGetFull).mockRestore();
+    const rule = {dictionary: 'Dictionary A', revision: '2026-01', path: 'label.svg', action: 'replace', text: 'Saved after persistence'};
+    const importing = importRules({version: 1, rules: [rule]});
+    await vi.waitFor(() => { expect(writes).toHaveLength(1); });
+    expect((await api.optionsGetFull()).global.copyImageRules).toEqual(optionsFull.global.copyImageRules);
+    /** @type {HTMLInputElement} */ (querySelectorNotNull(window.document, '#copy-dictionaries input')).click();
+    writes[0].complete();
+    await vi.waitFor(() => { expect(writes).toHaveLength(2); });
+    expect(parseJson(writes[1].options)).toMatchObject({
+        global: {copyImageRules: [rule]},
+        profiles: [{options: {general: {copyExcludedDictionaries: ['Dictionary A']}}}],
+    });
+    writes[1].complete();
+    await importing;
+    await vi.waitFor(async () => {
+        const saved = await api.optionsGetFull();
+        expect(saved.global.copyImageRules).toEqual([rule]);
+        expect(saved.profiles[0].options.general.copyExcludedDictionaries).toEqual(['Dictionary A']);
+    });
+});
+
+test('Copy stops using old revision rules immediately while a dictionary refresh is pending or fails', async ({window}) => {
+    const {api, application, optionsFull, clipboard, render} = await setupSearch();
+    vi.spyOn(api, 'modifySettings').mockImplementation(async (targets) => {
+        for (const target of targets) {
+            if (target.action !== 'set') { throw new Error('Expected rule replacement'); }
+            new ObjectPropertyAccessor(optionsFull).set(ObjectPropertyAccessor.getPathArray(target.path), target.value);
+        }
+        return [{result: true}];
+    });
+    await importRules({version: 1, rules: [{dictionary: 'Dictionary A', revision: '2026-01', path: 'label.svg', action: 'replace', text: 'Old revision text'}]});
+    await render([createEntry('言葉', ['word', {type: 'image', path: 'label.svg', alt: 'Metadata'}])]);
+    const button = /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '[data-action="copy-entry"]'));
+    /** @type {(reason: Error) => void} */
+    let fail = () => {};
+    vi.spyOn(api, 'getDictionaryInfo').mockImplementation(async () => new Promise((_resolve, reject) => { fail = reject; }));
+    application.trigger('databaseUpdated', {type: 'dictionary', cause: 'import'});
+    button.click();
+    expect(clipboard.text).toContain('Metadata');
+    expect(clipboard.text).not.toContain('Old revision text');
+    fail(new Error('Dictionary info unavailable'));
+    await vi.waitFor(() => { expect(querySelectorNotNull(window.document, '#copy-options-status').textContent).toContain('Could not read dictionary revisions'); });
+    button.click();
+    expect(clipboard.text).toContain('Metadata');
+    expect(clipboard.text).not.toContain('Old revision text');
+});
+
+test('An older dictionary refresh response cannot restore superseded revision rules', async ({window}) => {
+    const {api, application, optionsFull, clipboard, render} = await setupSearch();
+    vi.spyOn(api, 'modifySettings').mockImplementation(async (targets) => {
+        for (const target of targets) {
+            if (target.action !== 'set') { throw new Error('Expected rule replacement'); }
+            new ObjectPropertyAccessor(optionsFull).set(ObjectPropertyAccessor.getPathArray(target.path), target.value);
+        }
+        return [{result: true}];
+    });
+    await importRules({version: 1,
+        rules: [
+            {dictionary: 'Dictionary A', revision: '2026-01', path: 'label.svg', action: 'replace', text: 'Old revision text'},
+            {dictionary: 'Dictionary A', revision: '2026-02', path: 'label.svg', action: 'replace', text: 'Current revision text'},
+        ]});
+    await render([createEntry('言葉', ['word', {type: 'image', path: 'label.svg', alt: 'Metadata'}])]);
+    /** @type {(summaries: import('dictionary-importer').Summary[]) => void} */
+    let completeOld = () => {};
+    const oldResponse = new Promise((/** @type {(value: import('dictionary-importer').Summary[]) => void} */ resolve) => { completeOld = resolve; });
+    const summary = {title: 'Dictionary A', revision: '2026-02', sequenced: true, version: 3, importDate: 0, prefixWildcardsSupported: false, styles: ''};
+    vi.spyOn(api, 'getDictionaryInfo').mockReturnValueOnce(oldResponse).mockResolvedValue([summary]);
+    application.trigger('databaseUpdated', {type: 'dictionary', cause: 'import'});
+    application.trigger('databaseUpdated', {type: 'dictionary', cause: 'import'});
+    const button = /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '[data-action="copy-entry"]'));
+    await vi.waitFor(() => {
+        button.click();
+        expect(clipboard.text).toContain('Current revision text');
+    });
+    completeOld([{...summary, revision: '2026-01'}]);
+    await oldResponse;
+    button.click();
+    expect(clipboard.text).toContain('Current revision text');
+    expect(clipboard.text).not.toContain('Old revision text');
 });

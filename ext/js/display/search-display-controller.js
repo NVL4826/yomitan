@@ -16,6 +16,8 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+import {parseJson} from '../core/json.js';
+import {validateCopyImageRuleDocument} from './copy-image-rules.js';
 import {ClipboardMonitor} from '../comm/clipboard-monitor.js';
 import {createApiMap, invokeApiMapHandler} from '../core/api-map.js';
 import {EventListenerCollection} from '../core/event-listener-collection.js';
@@ -75,6 +77,12 @@ export class SearchDisplayController {
         this._copyingEntry = false;
         /** @type {Set<string>} */
         this._copyExcludedDictionaries = new Set();
+        /** @type {import('settings').CopyImageRule[]} */
+        this._copyImageRules = [];
+        /** @type {Map<string, string>} */
+        this._copyImageRevisions = new Map();
+        /** @type {number} */
+        this._copyImageRevisionRequest = 0;
         /** @type {import('clipboard-monitor').ClipboardReaderLike} */
         this._clipboardReaderLike = {
             getText: this._display.application.api.clipboardGet.bind(this._display.application.api),
@@ -97,6 +105,7 @@ export class SearchDisplayController {
 
         chrome.runtime.onMessage.addListener(this._onMessage.bind(this));
         this._display.application.on('optionsUpdated', this._onOptionsUpdated.bind(this));
+        this._display.application.on('databaseUpdated', () => { void this.refreshCopyImageRevisions(); });
 
         this._display.on('optionsUpdated', this._onDisplayOptionsUpdated.bind(this));
         this._display.on('contentUpdateStart', this._onContentUpdateStart.bind(this));
@@ -125,6 +134,11 @@ export class SearchDisplayController {
         this._display.hotkeyHandler.on('keydownNonHotkey', this._onKeyDown.bind(this));
 
         this._profileSelect.addEventListener('change', this._onProfileSelectChange.bind(this), false);
+        /** @type {HTMLInputElement} */
+        const ruleFile = querySelectorNotNull(document, '#copy-image-rules-file');
+        querySelectorNotNull(document, '#copy-image-rules-import').addEventListener('click', () => { ruleFile.click(); });
+        ruleFile.addEventListener('change', () => { void this._importCopyImageRules(ruleFile); });
+        querySelectorNotNull(document, '#copy-image-rules-export').addEventListener('click', () => { this._exportCopyImageRules(); });
 
         const displayOptions = this._display.getOptions();
         if (displayOptions !== null) {
@@ -137,6 +151,86 @@ export class SearchDisplayController {
      */
     setMode(mode) {
         this._searchPersistentStateController.mode = mode;
+    }
+
+    /** @returns {import('settings').CopyImageRule[]} */
+    getCopyImageRules() {
+        return this._copyImageRules;
+    }
+
+    /** */
+    async refreshCopyImageRevisions() {
+        const request = ++this._copyImageRevisionRequest;
+        this._copyImageRevisions.clear();
+        try {
+            const dictionaries = await this._display.application.api.getDictionaryInfo();
+            if (request !== this._copyImageRevisionRequest) { return; }
+            this._copyImageRevisions = new Map(dictionaries.map(({title, revision}) => [title, revision]));
+        } catch (error) {
+            if (request !== this._copyImageRevisionRequest) { return; }
+            querySelectorNotNull(document, '#copy-options-status').textContent = 'Could not read dictionary revisions. Image rules are paused until they can be read.';
+        }
+    }
+
+    /**
+     * @param {import('dictionary').TermDictionaryEntry} entry
+     * @returns {ReturnType<typeof getResultEntryText>}
+     */
+    getCopyEntryText(entry) {
+        return getResultEntryText(entry, this._copyExcludedDictionaries, this._copyImageRules, this._copyImageRevisions);
+    }
+
+    /** @param {import('settings').CopyImageRule[]} rules */
+    async saveCopyImageRules(rules) {
+        rules = validateCopyImageRuleDocument({version: 1, rules});
+        const results = await this._display.application.api.modifySettings([{
+            action: 'set', path: 'global.copyImageRules', value: rules, scope: 'global', optionsContext: null,
+        }], 'search-copy');
+        if (results.some(({error}) => typeof error !== 'undefined')) { throw new Error('Could not save image copy rules.'); }
+        this._copyImageRules = rules;
+    }
+
+    /** @param {HTMLInputElement} input */
+    async _importCopyImageRules(input) {
+        const file = input.files?.[0];
+        input.value = '';
+        if (typeof file === 'undefined') { return; }
+        const status = querySelectorNotNull(document, '#copy-options-status');
+        status.textContent = '';
+        try {
+            const text = await new Promise((/** @type {(value: string) => void} */ resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => { resolve(/** @type {string} */ (reader.result)); };
+                reader.onerror = () => { reject(new Error('Could not read the selected file.')); };
+                reader.readAsText(file);
+            });
+            await this.saveCopyImageRules(validateCopyImageRuleDocument(parseJson(text)));
+            status.textContent = 'Image copy rules imported.';
+        } catch (error) {
+            status.textContent = `Could not import image copy rules: ${error instanceof Error ? error.message : 'Please try again.'}`;
+        }
+    }
+
+    /** */
+    _exportCopyImageRules() {
+        const status = querySelectorNotNull(document, '#copy-options-status');
+        try {
+            const blob = new Blob([JSON.stringify({version: 1, rules: this._copyImageRules}, null, 4)], {type: 'application/json'});
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = 'yomitan-copy-image-rules.json';
+            document.body.appendChild(link);
+            try {
+                link.click();
+            } finally {
+                link.remove();
+                setTimeout(() => { URL.revokeObjectURL(url); }, 1000);
+            }
+            status.textContent = 'Image copy rules exported.';
+        } catch (error) {
+            status.textContent = 'Could not export image copy rules. Please try again.';
+        }
     }
 
     // Actions
@@ -178,7 +272,7 @@ export class SearchDisplayController {
         querySelectorNotNull(element, '.actions').prepend(button);
         button.addEventListener('click', () => {
             try {
-                const {text, unresolvedImages} = getResultEntryText(dictionaryEntry, this._copyExcludedDictionaries);
+                const {text, unresolvedImages} = this.getCopyEntryText(dictionaryEntry);
                 if (text.length === 0) {
                     status.textContent = 'No dictionary content to copy.';
                     return;
@@ -244,6 +338,7 @@ export class SearchDisplayController {
         this._updateCopyOptions(options);
         this._queryInput.lang = options.general.language;
         await this._updateProfileSelect();
+        await this.refreshCopyImageRevisions();
     }
 
     /** @param {import('settings').ProfileOptions} options */
@@ -786,7 +881,8 @@ export class SearchDisplayController {
 
     /** */
     async _updateProfileSelect() {
-        const {profiles, profileCurrent} = await this._display.application.api.optionsGetFull();
+        const {profiles, profileCurrent, global} = await this._display.application.api.optionsGetFull();
+        this._copyImageRules = global.copyImageRules;
 
         /** @type {HTMLElement} */
         const optionGroup = querySelectorNotNull(document, '#profile-select-option-group');

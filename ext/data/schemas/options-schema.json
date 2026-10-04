@@ -1405,9 +1405,83 @@
             "type": "object",
             "required": [
                 "database",
-                "dataTransmissionConsentShown"
+                "dataTransmissionConsentShown",
+                "copyImageRules"
             ],
             "properties": {
+                "copyImageRules": {
+                    "type": "array",
+                    "default": [],
+                    "items": {
+                        "oneOf": [
+                            {
+                                "type": "object",
+                                "required": [
+                                    "dictionary",
+                                    "revision",
+                                    "path",
+                                    "action",
+                                    "text"
+                                ],
+                                "additionalProperties": false,
+                                "properties": {
+                                    "dictionary": {
+                                        "type": "string",
+                                        "minLength": 1
+                                    },
+                                    "revision": {
+                                        "type": "string",
+                                        "minLength": 1
+                                    },
+                                    "path": {
+                                        "type": "string",
+                                        "minLength": 1
+                                    },
+                                    "action": {
+                                        "type": "string",
+                                        "enum": [
+                                            "replace"
+                                        ]
+                                    },
+                                    "text": {
+                                        "type": "string",
+                                        "minLength": 1
+                                    }
+                                }
+                            },
+                            {
+                                "type": "object",
+                                "required": [
+                                    "dictionary",
+                                    "revision",
+                                    "path",
+                                    "action"
+                                ],
+                                "additionalProperties": false,
+                                "properties": {
+                                    "dictionary": {
+                                        "type": "string",
+                                        "minLength": 1
+                                    },
+                                    "revision": {
+                                        "type": "string",
+                                        "minLength": 1
+                                    },
+                                    "path": {
+                                        "type": "string",
+                                        "minLength": 1
+                                    },
+                                    "action": {
+                                        "type": "string",
+                                        "enum": [
+                                            "omit"
+                                        ]
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                },
                 "database": {
                     "type": "object",
                     "required": [
