@@ -15,7 +15,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-import {IDBKeyRange, indexedDB} from 'fake-indexeddb';
+import {IDBFactory, IDBKeyRange} from 'fake-indexeddb';
 import JSZip from 'jszip';
 import {Blob} from 'node:buffer';
 import {expect, vi} from 'vitest';
@@ -32,6 +32,7 @@ import {SearchPersistentStateController} from '../ext/js/display/search-persiste
 import {DocumentFocusController} from '../ext/js/dom/document-focus-controller.js';
 import {querySelectorNotNull} from '../ext/js/dom/query-selector.js';
 import {WebExtension} from '../ext/js/extension/web-extension.js';
+import {ObjectPropertyAccessor} from '../ext/js/general/object-property-accessor.js';
 import {HotkeyHandler} from '../ext/js/input/hotkey-handler.js';
 import {Translator} from '../ext/js/language/translator.js';
 import {createDomTest} from './fixtures/dom-test.js';
@@ -83,22 +84,25 @@ function createEntry(term, entries) {
 /**
  * @param {boolean} [monitor]
  * @param {import('display').DisplayPageType} [pageType]
- * @returns {Promise<{display: Display, api: API, options: import('settings').ProfileOptions, clipboard: {text: string}, copy: ReturnType<typeof vi.fn>, render: (entries: import('dictionary').DictionaryEntry[]) => Promise<void>}>}
+ * @param {import('settings').Options} [savedOptions]
+ * @returns {Promise<{display: Display, application: Application, api: API, options: import('settings').ProfileOptions, optionsFull: import('settings').Options, clipboard: {text: string}, copy: ReturnType<typeof vi.fn>, render: (entries: import('dictionary').DictionaryEntry[]) => Promise<void>}>}
  */
-async function setupSearch(monitor = false, pageType = 'search') {
+async function setupSearch(monitor = false, pageType = 'search', savedOptions) {
     vi.stubGlobal('fetch', fetch);
     vi.stubGlobal('chrome', {...chrome, runtime: {...chrome.runtime, onMessage: {addListener: vi.fn()}}});
     window.matchMedia = vi.fn().mockReturnValue({matches: false, addEventListener: vi.fn()});
     window.HTMLCanvasElement.prototype.transferControlToOffscreen = vi.fn().mockReturnValue({});
     const optionsUtil = new OptionsUtil();
     await optionsUtil.prepare();
-    const optionsFull = optionsUtil.getDefault();
+    const optionsFull = savedOptions ?? optionsUtil.getDefault();
     const options = optionsFull.profiles[0].options;
     options.scanning.enableOnSearchPage = false;
     options.general.enableWanakana = false;
     options.parsing.enableScanningParser = false;
     options.clipboard.enableSearchPageMonitor = monitor;
-    options.dictionaries = [{name: 'Dictionary A', alias: '', enabled: true, allowSecondarySearches: false, definitionsCollapsible: 'collapsed', partsOfSpeechFilter: true, useDeinflections: true}];
+    if (typeof savedOptions === 'undefined') {
+        options.dictionaries = [{name: 'Dictionary A', alias: '', enabled: true, allowSecondarySearches: false, definitionsCollapsible: 'collapsed', partsOfSpeechFilter: true, useDeinflections: true}];
+    }
     const api = new API(new WebExtension());
     vi.spyOn(api, 'optionsGet').mockResolvedValue(options);
     vi.spyOn(api, 'optionsGetFull').mockResolvedValue(optionsFull);
@@ -137,7 +141,7 @@ async function setupSearch(monitor = false, pageType = 'search') {
         });
         await completed;
     };
-    return {display, api, options, clipboard, copy, render};
+    return {display, application, api, options, optionsFull, clipboard, copy, render};
 }
 
 test('Copy targets the clicked result, includes collapsed text, and reports success', async ({window}) => {
@@ -205,14 +209,14 @@ test('Copy omits image assets, silently skips explicit illustrations, and counts
     /** @type {HTMLButtonElement} */ (querySelectorNotNull(document, 'button[data-action="copy-entry"]')).click();
     expect(clipboard.text).toContain('before  after');
     expect(clipboard.text).not.toMatch(/\.svg|\.png|表記|Image|<img/);
-    expect(querySelectorNotNull(document, '[role="status"]').textContent).toBe('Copied. 4 unresolved image(s) omitted.');
+    expect(querySelectorNotNull(document, '.copy-entry-status').textContent).toBe('Copied. 4 unresolved image(s) omitted.');
 });
 
 test('Copy recognizes an explicit illustration after dictionary import and lookup', async ({window}) => {
     const {document} = window;
     const {clipboard, render} = await setupSearch();
     setupStubs();
-    vi.stubGlobal('indexedDB', indexedDB);
+    vi.stubGlobal('indexedDB', new IDBFactory());
     vi.stubGlobal('IDBKeyRange', IDBKeyRange);
     vi.stubGlobal('Blob', Blob);
     const archive = new JSZip();
@@ -241,7 +245,7 @@ test('Copy recognizes an explicit illustration after dictionary import and looku
         await render(dictionaryEntries);
         /** @type {HTMLButtonElement} */ (querySelectorNotNull(document, 'button[data-action="copy-entry"]')).click();
         expect(clipboard.text).toContain('word');
-        expect(querySelectorNotNull(document, '[role="status"]').textContent).toBe('Copied. 1 unresolved image(s) omitted.');
+        expect(querySelectorNotNull(document, '.copy-entry-status').textContent).toBe('Copied. 1 unresolved image(s) omitted.');
     } finally {
         await database.close();
     }
@@ -254,7 +258,7 @@ test('Copy preserves the clipboard when dictionaries have no copyable text', asy
     /** @type {HTMLButtonElement} */ (querySelectorNotNull(document, 'button[data-action="copy-entry"]')).click();
     expect(copy).not.toHaveBeenCalled();
     expect(clipboard.text).toBe('previous clipboard');
-    expect(querySelectorNotNull(document, '[role="status"]').textContent).toBe('No dictionary content to copy.');
+    expect(querySelectorNotNull(document, '.copy-entry-status').textContent).toBe('No dictionary content to copy.');
 });
 
 for (const failure of ['returns false', 'throws']) {
@@ -270,7 +274,7 @@ for (const failure of ['returns false', 'throws']) {
         button.focus();
         button.click();
         expect(clipboard.text).toBe('previous clipboard');
-        expect(querySelectorNotNull(document, '[role="status"]').textContent).toBe('Could not copy this result. Please try again.');
+        expect(querySelectorNotNull(document, '.copy-entry-status').textContent).toBe('Could not copy this result. Please try again.');
         expect(document.querySelector('body > textarea')).toBeNull();
         expect(document.activeElement).toBe(button);
     });
@@ -368,4 +372,175 @@ test('Copy includes all variants, dictionary text, tags, frequencies, and struct
     expect(copiedText).toContain('IPA: 言葉 (ことば): kotoba');
     expect(copiedText).not.toMatch(/https:|<\/?(?:details|li|ruby|table)>|Play audio/);
     expect(entry).toEqual(original);
+});
+
+test('Copy checkboxes exclude dictionary content and images without changing lookup results', async ({window}) => {
+    const {document} = window;
+    const {api, display, options, clipboard, render} = await setupSearch();
+    vi.spyOn(api, 'modifySettings').mockResolvedValue([{result: true}]);
+    options.dictionaries.push({...options.dictionaries[0], name: 'Dictionary B', alias: 'Second dictionary'});
+    await display.updateOptions();
+    const entry = createEntry('言葉', ['Excluded definition', {type: 'structured-content',
+        content: [
+            {tag: 'div', content: 'Excluded example'},
+            {tag: 'img', path: 'label.svg', title: '表記'},
+            {tag: 'img', path: 'unknown.svg'},
+        ]}]);
+    const excludedTag = {name: 'excluded tag', category: '', order: 0, score: 0, content: [], dictionaries: ['Dictionary A'], redundant: false};
+    const sharedTag = {...excludedTag, name: 'shared tag', dictionaries: ['Dictionary A', 'Dictionary B']};
+    entry.headwords[0].tags = [excludedTag, sharedTag];
+    entry.definitions.push({...entry.definitions[0], dictionary: 'Dictionary B', tags: [excludedTag, sharedTag], entries: ['Included definition']});
+    entry.frequencies.push({index: 0, headwordIndex: 0, dictionary: 'Dictionary A', dictionaryIndex: 0, dictionaryAlias: 'Dictionary A', hasReading: true, frequencyMode: 'rank-based', frequency: 123, displayValue: null, displayValueParsed: false});
+    entry.pronunciations.push({index: 0,
+        headwordIndex: 0,
+        dictionary: 'Dictionary A',
+        dictionaryIndex: 0,
+        dictionaryAlias: 'Dictionary A',
+        pronunciations: [
+            {type: 'pitch-accent', positions: 0, nasalPositions: [], devoicePositions: [], tags: []},
+            {type: 'phonetic-transcription', ipa: 'kotoba', tags: []},
+        ]});
+    const original = structuredClone(entry);
+    const lookupSettings = structuredClone(options.dictionaries);
+    await render([entry]);
+    const results = querySelectorNotNull(document, '#dictionary-entries');
+    const displayedResults = results.innerHTML;
+    const copyButton = /** @type {HTMLButtonElement} */ (querySelectorNotNull(document, '[data-action="copy-entry"]'));
+    const checkbox = /** @type {HTMLInputElement} */ (querySelectorNotNull(document, '#copy-dictionaries input[data-dictionary="Dictionary A"]'));
+    expect(checkbox.checked).toBe(true);
+    checkbox.click();
+    copyButton.click();
+    expect(clipboard.text).toContain('Included definition');
+    expect(clipboard.text).toContain('shared tag');
+    expect(clipboard.text).not.toMatch(/Dictionary A|Excluded|excluded tag|123|downstep|kotoba|表記/);
+    expect(querySelectorNotNull(document, '.copy-entry-status').textContent).toBe('Copied.');
+    expect(entry).toEqual(original);
+    expect(options.dictionaries).toEqual(lookupSettings);
+    expect(display.dictionaryEntries).toEqual([original]);
+    expect(results.innerHTML.replace('Copied.', '')).toBe(displayedResults);
+    checkbox.click();
+    copyButton.click();
+    expect(clipboard.text).toContain('Excluded definition');
+    expect(clipboard.text).toContain('Excluded example');
+    expect(clipboard.text).toContain('excluded tag');
+    expect(clipboard.text).toContain('123');
+    expect(clipboard.text).toContain('downstep 0');
+    expect(clipboard.text).toContain('kotoba');
+    expect(querySelectorNotNull(document, '.copy-entry-status').textContent).toBe('Copied. 2 unresolved image(s) omitted.');
+});
+
+test('Copy exclusions survive settings reload and new dictionaries start included', async ({window}) => {
+    const {document} = window;
+    const {api, application, display, options, optionsFull, render} = await setupSearch();
+    const optionsUtil = new OptionsUtil();
+    await optionsUtil.prepare();
+    /** @type {Record<string, unknown>} */
+    let storage = {};
+    vi.stubGlobal('chrome', {...globalThis.chrome,
+        storage: {local: {
+            set: (/** @type {Record<string, unknown>} */ values, /** @type {() => void} */ callback) => { storage = values; callback(); },
+            get: (/** @type {string[]} */ _keys, /** @type {(values: Record<string, unknown>) => void} */ callback) => { callback(storage); },
+        }}});
+    vi.spyOn(api, 'modifySettings').mockImplementation(async (targets, source) => {
+        for (const target of targets) {
+            expect(target.scope).toBe('profile');
+            if (target.action !== 'set') { throw new Error('Expected a setting update'); }
+            new ObjectPropertyAccessor(options).set(ObjectPropertyAccessor.getPathArray(target.path), target.value);
+        }
+        await optionsUtil.save(optionsFull);
+        application.trigger('optionsUpdated', {source});
+        return [{result: true}];
+    });
+    await render([createEntry('言葉', ['word'])]);
+    const search = vi.spyOn(display, 'searchLast');
+    /** @type {HTMLInputElement} */ (querySelectorNotNull(document, '#copy-dictionaries input')).click();
+    await vi.waitFor(() => { expect(options.general.copyExcludedDictionaries).toEqual(['Dictionary A']); });
+    await vi.waitFor(() => { expect(storage.options).toBeTypeOf('string'); });
+    const reloaded = await optionsUtil.load();
+    reloaded.profiles[0].options.dictionaries.push({...options.dictionaries[0], name: 'Dictionary B', alias: '', enabled: false});
+    const reopened = await setupSearch(false, 'search', reloaded);
+    expect(search).not.toHaveBeenCalled();
+    expect(/** @type {HTMLInputElement} */ (querySelectorNotNull(document, '#copy-dictionaries input[data-dictionary="Dictionary A"]')).checked).toBe(false);
+    expect(/** @type {HTMLInputElement} */ (querySelectorNotNull(document, '#copy-dictionaries input[data-dictionary="Dictionary B"]')).checked).toBe(true);
+    const entry = createEntry('言葉', ['Excluded after reopening']);
+    entry.definitions.push({...entry.definitions[0], dictionary: 'Dictionary B', entries: ['New dictionary content']});
+    await reopened.render([entry]);
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(document, '[data-action="copy-entry"]')).click();
+    expect(reopened.clipboard.text).toContain('New dictionary content');
+    expect(reopened.clipboard.text).not.toContain('Excluded after reopening');
+});
+
+test('Copy leaves the clipboard unchanged when selected dictionaries have no content', async ({window}) => {
+    const {document} = window;
+    const {api, display, options, copy, clipboard, render} = await setupSearch();
+    vi.spyOn(api, 'modifySettings').mockResolvedValue([{result: true}]);
+    options.dictionaries.push({...options.dictionaries[0], name: 'Dictionary B'});
+    await display.updateOptions();
+    const entry = createEntry('言葉', ['Excluded definition']);
+    entry.definitions.push({...entry.definitions[0], dictionary: 'Dictionary B', entries: [' ', {type: 'image', path: 'unknown.svg'}]});
+    await render([entry]);
+    const button = /** @type {HTMLButtonElement} */ (querySelectorNotNull(document, '[data-action="copy-entry"]'));
+    for (const checkbox of document.querySelectorAll('#copy-dictionaries input')) {
+        /** @type {HTMLInputElement} */ (checkbox).click();
+        button.click();
+        expect(copy).not.toHaveBeenCalled();
+        expect(clipboard.text).toBe('previous clipboard');
+        expect(querySelectorNotNull(document, '.copy-entry-status').textContent).toBe('No dictionary content to copy.');
+    }
+});
+
+test('Copy options report persistence failures while applying the current selection', async ({window}) => {
+    const {document} = window;
+    const {api, copy, render} = await setupSearch();
+    vi.spyOn(api, 'modifySettings').mockRejectedValue(new Error('Storage unavailable'));
+    await render([createEntry('言葉', ['word'])]);
+    /** @type {HTMLInputElement} */ (querySelectorNotNull(document, '#copy-dictionaries input')).click();
+    await vi.waitFor(() => {
+        expect(querySelectorNotNull(document, '#copy-options-status').textContent).toBe('Could not save copy options. Please try again.');
+    });
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(document, '[data-action="copy-entry"]')).click();
+    expect(copy).not.toHaveBeenCalled();
+    expect(querySelectorNotNull(document, '.copy-entry-status').textContent).toBe('No dictionary content to copy.');
+});
+
+test('Copy filters notes from dictionary tags merged during lookup', async ({window}) => {
+    const {document} = window;
+    const {api, display, options, clipboard, render} = await setupSearch();
+    vi.spyOn(api, 'modifySettings').mockResolvedValue([{result: true}]);
+    options.dictionaries.push({...options.dictionaries[0], name: 'Dictionary B'});
+    await display.updateOptions();
+    setupStubs();
+    vi.stubGlobal('indexedDB', new IDBFactory());
+    vi.stubGlobal('IDBKeyRange', IDBKeyRange);
+    vi.stubGlobal('Blob', Blob);
+    const database = new DictionaryDatabase();
+    await database.prepare();
+    try {
+        const importer = new DictionaryImporter(new DictionaryImporterMediaLoader());
+        for (const [title, note] of [['Dictionary A', 'A-only note'], ['Dictionary B', 'B-only note']]) {
+            const archive = new JSZip();
+            archive.file('index.json', JSON.stringify({title, format: 3, revision: 'test'}));
+            archive.file('term_bank_1.json', JSON.stringify([['言葉', 'ことば', 'noun', '', 0, [`Definition from ${title}`], 1, 'noun']]));
+            archive.file('tag_bank_1.json', JSON.stringify([['noun', 'partOfSpeech', 0, note, 0]]));
+            const {errors} = await importer.importDictionary(database, await archive.generateAsync({type: 'arraybuffer'}), {prefixWildcardsSupported: true, yomitanVersion: '0.0.0.0'});
+            expect(errors).toEqual([]);
+        }
+        const translator = new Translator(database);
+        translator.prepare();
+        const findOptions = createFindTermsOptions('Dictionary A', {}, [{type: 'terms',
+            enabledDictionaryMap: [
+                ['Dictionary A', {index: 0, allowSecondarySearches: true, alias: '', partsOfSpeechFilter: true, useDeinflections: true}],
+                ['Dictionary B', {index: 1, allowSecondarySearches: true, alias: '', partsOfSpeechFilter: true, useDeinflections: true}],
+            ]}]);
+        const {dictionaryEntries} = await translator.findTerms('group', '言葉', findOptions);
+        const original = structuredClone(dictionaryEntries);
+        await render(dictionaryEntries);
+        /** @type {HTMLInputElement} */ (querySelectorNotNull(document, '#copy-dictionaries input[data-dictionary="Dictionary A"]')).click();
+        /** @type {HTMLButtonElement} */ (querySelectorNotNull(document, '[data-action="copy-entry"]')).click();
+        expect(clipboard.text).toContain('noun: B-only note');
+        expect(clipboard.text).not.toContain('A-only note');
+        expect(dictionaryEntries).toEqual(original);
+    } finally {
+        await database.close();
+    }
 });

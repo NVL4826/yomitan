@@ -1165,6 +1165,10 @@ export class Translator {
                 const tag2 = tags[j];
                 if (tag2.name !== name || tag2.category !== category) { continue; }
                 // Merge tag
+                if (typeof tag1.contentSources !== 'undefined' || tag2.dictionaries.some((dictionary) => !tag1.dictionaries.includes(dictionary))) {
+                    tag1.contentSources ??= tag1.dictionaries.map((dictionary) => ({dictionary, content: [...tag1.content]}));
+                    tag1.contentSources.push(...(tag2.contentSources ?? tag2.dictionaries.map((dictionary) => ({dictionary, content: [...tag2.content]}))));
+                }
                 tag1.order = Math.min(tag1.order, tag2.order);
                 tag1.score = Math.max(tag1.score, tag2.score);
                 tag1.dictionaries.push(...tag2.dictionaries);

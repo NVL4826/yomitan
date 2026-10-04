@@ -73,6 +73,8 @@ export class SearchDisplayController {
         this._clipboardMonitorEnabled = false;
         /** @type {boolean} */
         this._copyingEntry = false;
+        /** @type {Set<string>} */
+        this._copyExcludedDictionaries = new Set();
         /** @type {import('clipboard-monitor').ClipboardReaderLike} */
         this._clipboardReaderLike = {
             getText: this._display.application.api.clipboardGet.bind(this._display.application.api),
@@ -176,7 +178,7 @@ export class SearchDisplayController {
         querySelectorNotNull(element, '.actions').prepend(button);
         button.addEventListener('click', () => {
             try {
-                const {text, unresolvedImages} = getResultEntryText(dictionaryEntry);
+                const {text, unresolvedImages} = getResultEntryText(dictionaryEntry, this._copyExcludedDictionaries);
                 if (text.length === 0) {
                     status.textContent = 'No dictionary content to copy.';
                     return;
@@ -223,11 +225,11 @@ export class SearchDisplayController {
         }
     }
 
-    /** */
-    async _onOptionsUpdated() {
+    /** @param {import('application').Events['optionsUpdated']} details */
+    async _onOptionsUpdated({source}) {
         await this._display.updateOptions();
         const query = this._queryInput.value;
-        if (query) {
+        if (query && source !== 'search-copy') {
             this._display.searchLast(false);
         }
     }
@@ -239,8 +241,56 @@ export class SearchDisplayController {
         this._clipboardMonitorEnabled = options.clipboard.enableSearchPageMonitor;
         this._updateClipboardMonitorEnabled();
         this._updateSearchSettings(options);
+        this._updateCopyOptions(options);
         this._queryInput.lang = options.general.language;
         await this._updateProfileSelect();
+    }
+
+    /** @param {import('settings').ProfileOptions} options */
+    _updateCopyOptions(options) {
+        this._copyExcludedDictionaries = new Set(options.general.copyExcludedDictionaries);
+        const container = querySelectorNotNull(document, '#copy-dictionaries');
+        const focusedDictionary = document.activeElement instanceof HTMLInputElement ? document.activeElement.dataset.dictionary : void 0;
+        container.replaceChildren();
+        for (const {name, alias} of options.dictionaries) {
+            const row = document.createElement('div');
+            const label = document.createElement('label');
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.dataset.dictionary = name;
+            checkbox.checked = !this._copyExcludedDictionaries.has(name);
+            checkbox.addEventListener('change', () => { void this._onCopyDictionaryChange(checkbox, name); });
+            label.append(checkbox, ` ${alias || name}`);
+            row.appendChild(label);
+            container.appendChild(row);
+            if (name === focusedDictionary) { checkbox.focus({preventScroll: true}); }
+        }
+    }
+
+    /**
+     * @param {HTMLInputElement} checkbox
+     * @param {string} dictionary
+     */
+    async _onCopyDictionaryChange(checkbox, dictionary) {
+        if (checkbox.checked) {
+            this._copyExcludedDictionaries.delete(dictionary);
+        } else {
+            this._copyExcludedDictionaries.add(dictionary);
+        }
+        const status = querySelectorNotNull(document, '#copy-options-status');
+        status.textContent = '';
+        try {
+            const results = await this._display.application.api.modifySettings([{
+                action: 'set',
+                path: 'general.copyExcludedDictionaries',
+                value: [...this._copyExcludedDictionaries],
+                scope: 'profile',
+                optionsContext: this._display.getOptionsContext(),
+            }], 'search-copy');
+            if (results.some(({error}) => typeof error !== 'undefined')) { throw new Error('Settings update failed'); }
+        } catch (e) {
+            status.textContent = 'Could not save copy options. Please try again.';
+        }
     }
 
     /**

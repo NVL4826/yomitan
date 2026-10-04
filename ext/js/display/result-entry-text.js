@@ -17,9 +17,10 @@
 
 /**
  * @param {import('dictionary').TermDictionaryEntry} entry
+ * @param {Set<string>} [excludedDictionaries]
  * @returns {{text: string, unresolvedImages: number}}
  */
-export function getResultEntryText(entry) {
+export function getResultEntryText(entry, excludedDictionaries = new Set()) {
     const headwords = entry.headwords.map(({term, reading}) => (term === reading || reading.length === 0 ? term : `${term} (${reading})`));
     /** @type {Map<string, string[]>} */
     const sections = new Map();
@@ -29,6 +30,7 @@ export function getResultEntryText(entry) {
      * @param {string} text
      */
     const append = (dictionary, text) => {
+        if (excludedDictionaries.has(dictionary)) { return; }
         text = text.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
         if (text.length === 0) { return; }
         let section = sections.get(dictionary);
@@ -41,11 +43,12 @@ export function getResultEntryText(entry) {
     for (const [index, headword] of entry.headwords.entries()) {
         for (const tag of headword.tags) {
             for (const dictionary of tag.dictionaries) {
-                append(dictionary, `Tags (${headwords[index]}): ${getTagsText([tag])}`);
+                append(dictionary, `Tags (${headwords[index]}): ${getTagsText([tag], excludedDictionaries, dictionary)}`);
             }
         }
     }
     for (const definition of entry.definitions) {
+        if (excludedDictionaries.has(definition.dictionary)) { continue; }
         const lines = [];
         for (const content of definition.entries) {
             if (typeof content === 'string') {
@@ -65,15 +68,17 @@ export function getResultEntryText(entry) {
             }
         }
         const text = lines.join('\n').trim();
-        const tags = getTagsText(definition.tags);
+        const tags = getTagsText(definition.tags, excludedDictionaries);
         if (text.length === 0 && tags.length === 0) { continue; }
         const variants = definition.headwordIndices.map((index) => headwords[index]).join(', ');
         append(definition.dictionary, [variants, tags.length > 0 ? `[${tags}]` : '', text].filter((line) => line.length > 0).join('\n'));
     }
     for (const frequency of entry.frequencies) {
+        if (excludedDictionaries.has(frequency.dictionary)) { continue; }
         append(frequency.dictionary, `Frequency: ${headwords[frequency.headwordIndex]}: ${frequency.displayValue ?? frequency.frequency}`);
     }
     for (const pronunciation of entry.pronunciations) {
+        if (excludedDictionaries.has(pronunciation.dictionary)) { continue; }
         for (const value of pronunciation.pronunciations) {
             let text;
             if (value.type === 'pitch-accent') {
@@ -83,7 +88,7 @@ export function getResultEntryText(entry) {
             } else {
                 text = `IPA: ${headwords[pronunciation.headwordIndex]}: ${value.ipa}`;
             }
-            const tags = getTagsText(value.tags);
+            const tags = getTagsText(value.tags, excludedDictionaries);
             if (tags.length > 0) { text += ` [${tags}]`; }
             append(pronunciation.dictionary, text);
         }
@@ -101,10 +106,21 @@ export function getResultEntryText(entry) {
 
 /**
  * @param {import('dictionary').Tag[]} tags
+ * @param {Set<string>} [excludedDictionaries]
+ * @param {string} [sourceDictionary]
  * @returns {string}
  */
-function getTagsText(tags) {
-    return tags.map(({name, content}) => (content.length === 0 ? name : `${name}: ${content.join('; ')}`)).join(', ');
+function getTagsText(tags, excludedDictionaries = new Set(), sourceDictionary) {
+    return tags
+        .filter(({dictionaries}) => dictionaries.length === 0 || dictionaries.some((dictionary) => !excludedDictionaries.has(dictionary)))
+        .map(({name, content, contentSources}) => {
+            if (typeof contentSources !== 'undefined') {
+                content = [...new Set(contentSources
+                    .filter((source) => !excludedDictionaries.has(source.dictionary) && (typeof sourceDictionary === 'undefined' || source.dictionary === sourceDictionary))
+                    .flatMap((source) => source.content))];
+            }
+            return content.length === 0 ? name : `${name}: ${content.join('; ')}`;
+        }).join(', ');
 }
 
 /**

@@ -126,6 +126,7 @@
                                     "sortFrequencyDictionary",
                                     "sortFrequencyDictionaryOrder",
                                     "stickySearchHeader",
+                                    "copyExcludedDictionaries",
                                     "fontFamily",
                                     "fontSize",
                                     "lineHeight",
@@ -345,6 +346,11 @@
                                     "stickySearchHeader": {
                                         "type": "boolean",
                                         "default": false
+                                    },
+                                    "copyExcludedDictionaries": {
+                                        "type": "array",
+                                        "default": [],
+                                        "items": {"type": "string"}
                                     },
                                     "enableYomitanApi": {
                                         "type": "boolean",

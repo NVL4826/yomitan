@@ -54,6 +54,8 @@ export type Tag = {
      * the length of the `dictionaries` field, as duplicates are removed.
      */
     content: string[];
+    /** Descriptions by source when tags from different dictionaries have been merged. */
+    contentSources?: {dictionary: string, content: string[]}[];
     /**
      * An array of dictionary names that contained a tag with this name and category.
      */
