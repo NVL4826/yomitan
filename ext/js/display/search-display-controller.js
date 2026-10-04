@@ -22,6 +22,7 @@ import {ClipboardMonitor} from '../comm/clipboard-monitor.js';
 import {createApiMap, invokeApiMapHandler} from '../core/api-map.js';
 import {EventListenerCollection} from '../core/event-listener-collection.js';
 import {querySelectorNotNull} from '../dom/query-selector.js';
+import {CopyImageInspector} from './copy-image-inspector.js';
 import {getResultEntryText} from './result-entry-text.js';
 import {isComposing} from '../language/ime-utilities.js';
 import {convertToKana, convertToKanaIME} from '../language/ja/japanese-wanakana.js';
@@ -83,6 +84,8 @@ export class SearchDisplayController {
         this._copyImageRevisions = new Map();
         /** @type {number} */
         this._copyImageRevisionRequest = 0;
+        /** @type {CopyImageInspector} */
+        this._copyImageInspector = new CopyImageInspector(this, display.application.api);
         /** @type {import('clipboard-monitor').ClipboardReaderLike} */
         this._clipboardReaderLike = {
             getText: this._display.application.api.clipboardGet.bind(this._display.application.api),
@@ -105,7 +108,10 @@ export class SearchDisplayController {
 
         chrome.runtime.onMessage.addListener(this._onMessage.bind(this));
         this._display.application.on('optionsUpdated', this._onOptionsUpdated.bind(this));
-        this._display.application.on('databaseUpdated', () => { void this.refreshCopyImageRevisions(); });
+        this._display.application.on('databaseUpdated', () => {
+            this._copyImageInspector.close();
+            void this.refreshCopyImageRevisions();
+        });
 
         this._display.on('optionsUpdated', this._onDisplayOptionsUpdated.bind(this));
         this._display.on('contentUpdateStart', this._onContentUpdateStart.bind(this));
@@ -269,7 +275,13 @@ export class SearchDisplayController {
         status.setAttribute('role', 'status');
         status.setAttribute('aria-live', 'polite');
         element.appendChild(status);
-        querySelectorNotNull(element, '.actions').prepend(button);
+        const inspect = document.createElement('button');
+        inspect.type = 'button';
+        inspect.dataset.action = 'inspect-copy-images';
+        inspect.textContent = 'Inspect images';
+        inspect.title = 'View dictionary images and edit their copy rules';
+        inspect.addEventListener('click', () => { this._copyImageInspector.show(dictionaryEntry); });
+        querySelectorNotNull(element, '.actions').prepend(button, inspect);
         button.addEventListener('click', () => {
             try {
                 const {text, unresolvedImages} = this.getCopyEntryText(dictionaryEntry);
@@ -404,6 +416,7 @@ export class SearchDisplayController {
      * @param {import('display').EventArgument<'contentUpdateStart'>} details
      */
     _onContentUpdateStart({type, query}) {
+        this._copyImageInspector.close();
         let animate = false;
         let valid = false;
         let showBackButton = false;

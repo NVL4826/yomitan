@@ -243,3 +243,51 @@ h1 {
         background-color: #1e1e1e;
     }
 }
+
+
+/* Image copy rules */
+#copy-image-inspector {
+    color: var(--text-color);
+    background: var(--background-color);
+    width: min(48em, 90vw);
+    max-height: 85vh;
+    overflow: auto;
+    border: 1px solid var(--separator-color1);
+}
+#copy-image-inspector::backdrop {
+    background: rgba(0, 0, 0, 0.5);
+}
+.copy-image-card {
+    border-top: 1px solid var(--separator-color1);
+    padding: 1em 0;
+    overflow-wrap: anywhere;
+}
+.copy-image-card dt {
+    font-weight: bold;
+}
+.copy-image-card dd {
+    margin: 0 0 0.5em;
+}
+.copy-image-media>img {
+    display: block;
+    max-width: 100%;
+    max-height: 20em;
+    object-fit: contain;
+    background: #fff;
+}
+.copy-image-card label {
+    display: block;
+    margin-bottom: 0.5em;
+}
+.copy-image-text {
+    display: block;
+    box-sizing: border-box;
+    width: 100%;
+}
+.copy-image-context,
+.copy-image-inactive {
+    white-space: pre-wrap;
+}
+#copy-image-inspector-status {
+    margin: 1em 0;
+}
