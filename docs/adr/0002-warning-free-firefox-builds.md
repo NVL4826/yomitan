@@ -17,7 +17,7 @@ Completion requires regenerated library bundles, rebuilt Firefox archives, regre
 Rebuild and validate with web-ext on PATH:
 
 ```sh
-npm run build -- firefox firefox-unlisted firefox-dev firefox-android --manifest firefox-unlisted --version 1.0.1
+npm run build -- firefox firefox-unlisted firefox-dev firefox-android --manifest firefox-unlisted --version 1.0.2
 npm run test:firefox
 ```
 
