@@ -53,6 +53,12 @@
                                     <legend>Include dictionaries in copied text</legend>
                                     <div id="copy-dictionaries"></div>
                                 </fieldset>
+                                <fieldset>
+                                    <legend>Image copy rules</legend>
+                                    <button type="button" id="copy-image-rules-import">Import JSON</button>
+                                    <button type="button" id="copy-image-rules-export">Export JSON</button>
+                                    <input type="file" id="copy-image-rules-file" accept=".json,application/json" hidden>
+                                </fieldset>
                                 <div id="copy-options-status" role="status" aria-live="polite"></div>
                             </details>
                         </div>
@@ -100,6 +106,35 @@
 </div>
 
 <div id="popup-menus"></div>
+
+<dialog id="copy-image-inspector" aria-labelledby="copy-image-inspector-title" class="scan-disable">
+    <h2 id="copy-image-inspector-title">Image copy rules</h2>
+    <p>Rules apply to this dictionary revision. Save here, then Copy again. Export JSON to update your separate file.</p>
+    <label><input type="checkbox" id="copy-image-show-all"> Show all images in this result</label>
+    <div id="copy-image-inspector-list"></div>
+    <div id="copy-image-inspector-status" role="status" aria-live="polite"></div>
+    <button type="button" id="copy-image-inspector-close">Close</button>
+</dialog>
+<template id="copy-image-card-template">
+    <section class="copy-image-card">
+        <dl>
+            <dt>Dictionary</dt><dd class="copy-image-dictionary"></dd>
+            <dt>Revision</dt><dd class="copy-image-revision"></dd>
+            <dt>Image path</dt><dd class="copy-image-path"></dd>
+        </dl>
+        <div class="copy-image-media"></div>
+        <p class="copy-image-handling"></p>
+        <p class="copy-image-inactive"></p>
+        <p class="copy-image-context"></p>
+        <fieldset>
+            <legend>Rule for this image</legend>
+            <label>Action <select class="copy-image-action"><option value="replace">Replace with text</option><option value="omit">Omit deliberately</option></select></label>
+            <label>Replacement text <textarea class="copy-image-text" rows="2"></textarea></label>
+            <button type="button" data-action="save-copy-image-rule">Save rule</button>
+            <button type="button" data-action="delete-copy-image-rule">Delete rule</button>
+        </fieldset>
+    </section>
+</template>
 
 <!-- Search settings modal -->
 <div id="search-settings-modal" class="modal" tabindex="-1" role="dialog" hidden><div class="modal-content">

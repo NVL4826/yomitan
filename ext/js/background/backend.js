@@ -92,6 +92,8 @@ export class Backend {
         this._clipboardMonitor = new ClipboardMonitor(this._clipboardReader);
         /** @type {?import('settings').Options} */
         this._options = null;
+        /** @type {Promise<void>} */
+        this._settingsUpdatePromise = Promise.resolve();
         /** @type {import('../data/json-schema.js').JsonSchema[]} */
         this._profileConditionsSchemaCache = [];
         /** @type {?string} */
@@ -973,9 +975,10 @@ export class Backend {
 
     /** @type {import('api').ApiHandler<'setAllSettings'>} */
     async _onApiSetAllSettings({value, source}) {
-        this._optionsUtil.validate(value);
-        this._options = clone(value);
-        await this._saveOptions(source);
+        return this._queueSettingsUpdate(async () => {
+            this._optionsUtil.validate(value);
+            await this._saveOptions(source, clone(value));
+        });
     }
 
     /** @type {import('api').ApiHandlerNoExtraArgs<'getOrCreateSearchPopup'>} */
@@ -1329,18 +1332,28 @@ export class Backend {
      * @returns {Promise<import('core').Response<import('settings-modifications').ModificationResult>[]>}
      */
     async _modifySettings(targets, source) {
-        /** @type {import('core').Response<import('settings-modifications').ModificationResult>[]} */
-        const results = [];
-        for (const target of targets) {
+        return this._queueSettingsUpdate(async () => {
+            const previous = this._getOptionsFull(false);
+            const updated = clone(previous);
+            /** @type {import('core').Response<import('settings-modifications').ModificationResult>[]} */
+            const results = [];
+            // Mutate the candidate synchronously; readers retain the saved options during persistence.
+            this._options = updated;
             try {
-                const result = this._modifySetting(target);
-                results.push({result: clone(result)});
-            } catch (e) {
-                results.push({error: ExtensionError.serialize(e)});
+                for (const target of targets) {
+                    try {
+                        const result = this._modifySetting(target);
+                        results.push({result: clone(result)});
+                    } catch (e) {
+                        results.push({error: ExtensionError.serialize(e)});
+                    }
+                }
+            } finally {
+                this._options = previous;
             }
-        }
-        await this._saveOptions(source);
-        return results;
+            await this._saveOptions(source, updated);
+            return results;
+        });
     }
 
     /**
@@ -2726,12 +2739,24 @@ export class Backend {
 
     /**
      * @param {string} source
+     * @param {import('settings').Options} options
      */
-    async _saveOptions(source) {
-        this._clearProfileConditionsSchemaCache();
-        const options = this._getOptionsFull(false);
+    async _saveOptions(source, options) {
         await this._optionsUtil.save(options);
+        this._options = options;
+        this._clearProfileConditionsSchemaCache();
         this._applyOptions(source);
+    }
+
+    /**
+     * @template T
+     * @param {() => Promise<T>} update
+     * @returns {Promise<T>}
+     */
+    _queueSettingsUpdate(update) {
+        const result = this._settingsUpdatePromise.then(update);
+        this._settingsUpdatePromise = result.then(() => {}, () => {});
+        return result;
     }
 
     /**

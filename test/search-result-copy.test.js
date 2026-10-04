@@ -18,7 +18,10 @@
 import {IDBFactory, IDBKeyRange} from 'fake-indexeddb';
 import JSZip from 'jszip';
 import {Blob} from 'node:buffer';
+import {readFileSync} from 'node:fs';
 import {expect, vi} from 'vitest';
+import {parseJson} from '../ext/js/core/json.js';
+import {Backend} from '../ext/js/background/backend.js';
 import {Application} from '../ext/js/application.js';
 import {API} from '../ext/js/comm/api.js';
 import {CrossFrameAPI} from '../ext/js/comm/cross-frame-api.js';
@@ -42,6 +45,11 @@ import {setupStubs} from './utilities/database.js';
 import {createFindTermsOptions} from './utilities/translator.js';
 
 const test = createDomTest('ext/search.html');
+
+// Trimmed from the supplied SMK8 亜 entry; label paths verified against the supplied SVG text.
+const imageFixtures = /** @type {{sample: import('dictionary-data').TermGlossaryContent[], labels: import('structured-content').ImageElement[]}} */ (
+    parseJson(readFileSync(new URL('data/copy-image-content.json', import.meta.url), 'utf8'))
+);
 
 /**
  * @param {string} term
@@ -95,7 +103,7 @@ async function setupSearch(monitor = false, pageType = 'search', savedOptions) {
     const optionsUtil = new OptionsUtil();
     await optionsUtil.prepare();
     const optionsFull = savedOptions ?? optionsUtil.getDefault();
-    const options = optionsFull.profiles[0].options;
+    const options = optionsFull.profiles[optionsFull.profileCurrent].options;
     options.scanning.enableOnSearchPage = false;
     options.general.enableWanakana = false;
     options.parsing.enableScanningParser = false;
@@ -108,9 +116,13 @@ async function setupSearch(monitor = false, pageType = 'search', savedOptions) {
     vi.spyOn(api, 'optionsGetFull').mockResolvedValue(optionsFull);
     vi.spyOn(api, 'getEnvironmentInfo').mockResolvedValue({browser: 'firefox', platform: {os: 'linux'}});
     vi.spyOn(api, 'getLanguageSummaries').mockResolvedValue([]);
-    vi.spyOn(api, 'getDictionaryInfo').mockResolvedValue([]);
+    vi.spyOn(api, 'getDictionaryInfo').mockResolvedValue([
+        {title: 'Dictionary A', revision: '2026-01', sequenced: true, version: 3, importDate: 0, prefixWildcardsSupported: false, styles: ''},
+        {title: '新明解国語辞典　第八版', revision: 'smk8;2023-07-09', sequenced: true, version: 3, importDate: 0, prefixWildcardsSupported: false, styles: ''},
+    ]);
     vi.spyOn(api, 'parseText').mockResolvedValue([]);
     vi.spyOn(api, 'drawMedia').mockImplementation(() => {});
+    vi.spyOn(api, 'getMedia').mockResolvedValue([]);
     const clipboard = {text: 'previous clipboard'};
     vi.spyOn(api, 'clipboardGet').mockImplementation(async () => clipboard.text);
     const copy = vi.fn(() => {
@@ -212,7 +224,85 @@ test('Copy omits image assets, silently skips explicit illustrations, and counts
     expect(querySelectorNotNull(document, '.copy-entry-status').textContent).toBe('Copied. 4 unresolved image(s) omitted.');
 });
 
-test('Copy recognizes an explicit illustration after dictionary import and lookup', async ({window}) => {
+test('Copy recovers image metadata inline and keeps collapsed sample definitions', async ({window}) => {
+    const {document} = window;
+    const {clipboard, render} = await setupSearch();
+    const entry = createEntry('亜', [
+        ...imageFixtures.sample,
+        {type: 'structured-content',
+            content: [
+                'before ',
+                {tag: 'img', path: 'text.svg', alt: ' Alternative ', description: 'Wrong description', title: 'Wrong title'},
+                ' between ',
+                {tag: 'img', path: 'description.svg', alt: '  ', description: 'Description'},
+                ' after',
+                {tag: 'img', path: 'title.svg', title: 'Title label', data: {role: 'label'}},
+                {tag: 'img', path: 'photo.svg', alt: 'Do not copy a photo caption', data: {role: 'illustration'}},
+            ]},
+        {type: 'image', path: 'standalone.svg', description: 'Standalone description'},
+        {type: 'image', path: 'standalone-alt.svg', alt: 'Standalone alternative'},
+    ]);
+    entry.definitions[0].dictionary = '新明解国語辞典　第八版';
+    await render([entry]);
+    expect(querySelectorNotNull(document, 'details.gloss-sc-details').hasAttribute('open')).toBe(false);
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(document, '[data-action="copy-entry"]')).click();
+    expect(clipboard.text).toContain('一㊀…に次ぐ。「亜流・亜熱帯」\n二（略）アジア（亜細亜）。');
+    expect(clipboard.text).toContain('before Alternative between Description afterTitle label');
+    expect(clipboard.text).toContain('Standalone description\nStandalone alternative');
+    expect(clipboard.text).not.toMatch(/Wrong|photo caption|\.svg|Image|<svg/);
+    expect(querySelectorNotNull(document, '.copy-entry-status').textContent).toBe('Copied.');
+});
+
+test('Copy recovers verified SMK8 labels and counts only unsupported included images', async ({window}) => {
+    const {document} = window;
+    const {api, display, options, clipboard, render} = await setupSearch();
+    vi.spyOn(api, 'modifySettings').mockResolvedValue([{result: true}]);
+    options.dictionaries.push({...options.dictionaries[0], name: '新明解国語辞典　第八版'});
+    await display.updateOptions();
+    const entry = createEntry('亜', ['Other dictionary content', {type: 'structured-content',
+        content: [
+            {tag: 'img', path: 'smk8/表記-redfill.svg'},
+        ]}]);
+    entry.definitions.push({...entry.definitions[0],
+        dictionary: '新明解国語辞典　第八版',
+        entries: [
+            {type: 'structured-content', content: imageFixtures.labels.flatMap((image) => [image, '・'])},
+            {type: 'structured-content',
+                content: [
+                    'Before ',
+                    {tag: 'img', path: 'smk8/表記-redfill.svg', alt: 'Image', description: 'smk8/表記-redfill.svg', title: 'Open image'},
+                    ' after',
+                    {tag: 'img', path: 'smk8/gaiji/G655F.svg'},
+                    {tag: 'img', path: 'smk8/unknown.svg', title: 'Arbitrary hover title'},
+                    {tag: 'img', path: 'other/表記-redfill.svg'},
+                    {tag: 'img', path: 'smk8/unknown.svg', alt: 'https://example.com/image.svg'},
+                    {tag: 'img', path: 'smk8/photo.svg', title: 'A photo', data: {role: 'illustration'}},
+                ]},
+            {type: 'image', path: 'smk8/運用-fill.svg'},
+        ]});
+    const original = structuredClone(entry);
+    await render([entry]);
+    const button = /** @type {HTMLButtonElement} */ (querySelectorNotNull(document, '[data-action="copy-entry"]'));
+    button.click();
+    expect(clipboard.text).toContain('かぞえ方・一・二・三・四・五・六・他動・動・名・文法・派・自動・表記・運用・');
+    expect(clipboard.text).toContain('Before 表記 after\n運用');
+    expect(clipboard.text).not.toMatch(/\.svg|https:|Arbitrary|Open image|A photo|Image|<svg/);
+    expect(querySelectorNotNull(document, '.copy-entry-status').textContent).toBe('Copied. 5 unresolved image(s) omitted.');
+    /** @type {HTMLInputElement} */ (querySelectorNotNull(document, '#copy-dictionaries input[data-dictionary="新明解国語辞典　第八版"]')).click();
+    button.click();
+    expect(clipboard.text).toContain('Other dictionary content');
+    expect(clipboard.text).not.toMatch(/表記|運用|かぞえ方|新明解/);
+    expect(querySelectorNotNull(document, '.copy-entry-status').textContent).toBe('Copied. 1 unresolved image(s) omitted.');
+    /** @type {HTMLInputElement} */ (querySelectorNotNull(document, '#copy-dictionaries input[data-dictionary="Dictionary A"]')).click();
+    /** @type {HTMLInputElement} */ (querySelectorNotNull(document, '#copy-dictionaries input[data-dictionary="新明解国語辞典　第八版"]')).click();
+    button.click();
+    expect(clipboard.text).toContain('Before 表記 after');
+    expect(clipboard.text).not.toContain('Other dictionary content');
+    expect(querySelectorNotNull(document, '.copy-entry-status').textContent).toBe('Copied. 4 unresolved image(s) omitted.');
+    expect(entry).toEqual(original);
+});
+
+test('Copy preserves image metadata and illustration roles after dictionary import and lookup', async ({window}) => {
     const {document} = window;
     const {clipboard, render} = await setupSearch();
     setupStubs();
@@ -227,8 +317,14 @@ test('Copy recognizes an explicit illustration after dictionary import and looku
             'word',
             {tag: 'img', path: 'image.svg', data: {role: 'illustration'}},
             {tag: 'img', path: 'image.svg'},
+            {tag: 'img', path: 'image.svg', alt: 'Structured alternative'},
+            {tag: 'img', path: 'image.svg', description: 'Structured description'},
+            {tag: 'img', path: 'image.svg', title: 'Structured title', data: {role: 'text'}},
         ],
-    }], 1, '']]));
+    },
+    {type: 'image', path: 'image.svg', alt: 'Standalone alternative'},
+    {type: 'image', path: 'image.svg', description: 'Standalone description'},
+    {type: 'image', path: 'image.svg', title: 'Arbitrary standalone hover title'}], 1, '']]));
     archive.file('image.svg', '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>');
     const database = new DictionaryDatabase();
     await database.prepare();
@@ -244,8 +340,9 @@ test('Copy recognizes an explicit illustration after dictionary import and looku
         const {dictionaryEntries} = await translator.findTerms('group', '言葉', options);
         await render(dictionaryEntries);
         /** @type {HTMLButtonElement} */ (querySelectorNotNull(document, 'button[data-action="copy-entry"]')).click();
-        expect(clipboard.text).toContain('word');
-        expect(querySelectorNotNull(document, '.copy-entry-status').textContent).toBe('Copied. 1 unresolved image(s) omitted.');
+        expect(clipboard.text).toContain('wordStructured alternativeStructured descriptionStructured title\nStandalone alternative\nStandalone description');
+        expect(clipboard.text).not.toMatch(/Arbitrary|\.svg|Image/);
+        expect(querySelectorNotNull(document, '.copy-entry-status').textContent).toBe('Copied. 2 unresolved image(s) omitted.');
     } finally {
         await database.close();
     }
@@ -543,4 +640,597 @@ test('Copy filters notes from dictionary tags merged during lookup', async ({win
     } finally {
         await database.close();
     }
+});
+
+/**
+ * @param {API} api
+ * @param {import('settings').Options} optionsFull
+ */
+function mockRulePersistence(api, optionsFull) {
+    vi.spyOn(api, 'modifySettings').mockImplementation(async (targets) => {
+        for (const target of targets) {
+            if (target.action !== 'set') { throw new Error('Expected rule replacement'); }
+            new ObjectPropertyAccessor(optionsFull).set(ObjectPropertyAccessor.getPathArray(target.path), target.value);
+        }
+        return [{result: true}];
+    });
+}
+
+/** @param {unknown} value */
+async function importRules(value) {
+    const input = /** @type {HTMLInputElement} */ (querySelectorNotNull(document, '#copy-image-rules-file'));
+    Object.defineProperty(input, 'files', {configurable: true, value: [new File([typeof value === 'string' ? value : JSON.stringify(value)], 'rules.json', {type: 'application/json'})]});
+    input.dispatchEvent(new Event('change'));
+    await vi.waitFor(() => { expect(querySelectorNotNull(document, '#copy-options-status').textContent).not.toBe(''); });
+}
+
+test('Import replaces global rules and Copy uses exact revision rules before metadata', async ({window}) => {
+    const {api, optionsFull, clipboard, render} = await setupSearch();
+    vi.spyOn(api, 'modifySettings').mockImplementation(async (targets) => {
+        for (const target of targets) {
+            expect(target.scope).toBe('global');
+            if (target.action !== 'set') { throw new Error('Expected rule replacement'); }
+            new ObjectPropertyAccessor(optionsFull).set(ObjectPropertyAccessor.getPathArray(target.path), target.value);
+        }
+        return [{result: true}];
+    });
+    await render([createEntry('言葉', [{type: 'structured-content',
+        content: [
+            'Before ',
+            {tag: 'img', path: 'label.svg', alt: 'Metadata'},
+            ' after ',
+            {tag: 'img', path: 'photo.svg', alt: 'Caption'},
+        ]}])]);
+    await importRules({version: 1,
+        rules: [
+            {dictionary: 'Dictionary A', revision: '2026-01', path: 'label.svg', action: 'replace', text: '<plain text>'},
+            {dictionary: 'Dictionary A', revision: '2026-01', path: 'photo.svg', action: 'omit'},
+        ]});
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '[data-action="copy-entry"]')).click();
+    expect(clipboard.text).toContain('Before <plain text> after');
+    expect(clipboard.text).not.toMatch(/Metadata|Caption/);
+    expect(querySelectorNotNull(window.document, '.copy-entry-status').textContent).toBe('Copied.');
+    expect(optionsFull.global).toHaveProperty('copyImageRules', [
+        {dictionary: 'Dictionary A', revision: '2026-01', path: 'label.svg', action: 'replace', text: '<plain text>'},
+        {dictionary: 'Dictionary A', revision: '2026-01', path: 'photo.svg', action: 'omit'},
+    ]);
+});
+
+test('A rejected storage write preserves effective rules after importing and reloading settings', async ({window}) => {
+    const {api, display, optionsFull, clipboard, render} = await setupSearch();
+    const backend = new Backend(new WebExtension());
+    // eslint-disable-next-line no-underscore-dangle
+    await backend._optionsUtil.prepare();
+    optionsFull.global.copyImageRules = [{dictionary: 'Dictionary A', revision: '2026-01', path: 'label.svg', action: 'replace', text: 'Saved text'}];
+    // eslint-disable-next-line no-underscore-dangle
+    backend._options = structuredClone(optionsFull);
+    vi.spyOn(api, 'optionsGetFull').mockImplementation(async () => new Promise((resolve, reject) => {
+        // eslint-disable-next-line no-underscore-dangle
+        backend._onMessage({action: 'optionsGetFull', params: void 0}, {}, (response) => {
+            const result = /** @type {import('core').Response<import('settings').Options>} */ (response);
+            if (typeof result.error !== 'undefined') {
+                reject(new Error('Could not reload settings'));
+            } else {
+                resolve(/** @type {import('settings').Options} */ (result.result));
+            }
+        });
+    }));
+    vi.stubGlobal('chrome', {...globalThis.chrome,
+        runtime: {...globalThis.chrome.runtime,
+            // eslint-disable-next-line no-underscore-dangle
+            sendMessage: (/** @type {import('api').ApiMessageAny} */ message, /** @type {(response?: unknown) => void} */ callback) => { backend._onMessage(message, {}, callback); }},
+        storage: {local: {
+            set: (/** @type {unknown} */ _values, /** @type {() => void} */ callback) => {
+                Object.defineProperty(globalThis.chrome.runtime, 'lastError', {configurable: true, value: {message: 'Storage unavailable'}});
+                callback();
+                Object.defineProperty(globalThis.chrome.runtime, 'lastError', {configurable: true, value: void 0});
+            },
+        }}});
+    await display.updateOptions();
+    await render([createEntry('言葉', ['word', {type: 'image', path: 'label.svg'}])]);
+    await importRules({version: 1, rules: [{dictionary: 'Dictionary A', revision: '2026-01', path: 'label.svg', action: 'replace', text: 'Rejected text'}]});
+    expect(querySelectorNotNull(window.document, '#copy-options-status').textContent).toContain('Storage unavailable');
+    expect((await api.optionsGetFull()).global.copyImageRules).toEqual(optionsFull.global.copyImageRules);
+    await display.updateOptions();
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '[data-action="copy-entry"]')).click();
+    expect(clipboard.text).toContain('Saved text');
+    expect(clipboard.text).not.toContain('Rejected text');
+});
+
+const invalidRuleDocuments = /** @type {[string, unknown][]} */ ([
+    ['malformed JSON', '{'],
+    ['unsupported version', {version: 2, rules: []}],
+    ['non-array rules', {version: 1, rules: {}}],
+    ['missing identity', {version: 1, rules: [{dictionary: 'Dictionary A', revision: '', path: 'label.svg', action: 'omit'}]}],
+    ['empty replacement', {version: 1, rules: [{dictionary: 'Dictionary A', revision: '2026-01', path: 'label.svg', action: 'replace', text: '  '}]}],
+    ['unknown action', {version: 1, rules: [{dictionary: 'Dictionary A', revision: '2026-01', path: 'label.svg', action: 'guess'}]}],
+    ['omission with text', {version: 1, rules: [{dictionary: 'Dictionary A', revision: '2026-01', path: 'label.svg', action: 'omit', text: 'wrong'}]}],
+    ['duplicate identity', {version: 1,
+        rules: [
+            {dictionary: 'Dictionary A', revision: '2026-01', path: 'label.svg', action: 'omit'},
+            {dictionary: 'Dictionary A', revision: '2026-01', path: 'label.svg', action: 'replace', text: 'duplicate'},
+        ]}],
+]);
+for (const [name, document] of invalidRuleDocuments) {
+    test(`Import rejects ${name} without changing the effective collection`, async ({window}) => {
+        const {api, clipboard, render} = await setupSearch();
+        const save = vi.spyOn(api, 'modifySettings');
+        await render([createEntry('亜', ['word', {type: 'image', path: 'smk8/表記-redfill.svg'}])]);
+        await importRules(document);
+        expect(querySelectorNotNull(window.document, '#copy-options-status').textContent).toContain('Could not import');
+        expect(save).not.toHaveBeenCalled();
+        /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '[data-action="copy-entry"]')).click();
+        expect(clipboard.text).toContain('word');
+        expect(querySelectorNotNull(window.document, '.copy-entry-status').textContent).toContain('1 unresolved');
+    });
+}
+
+test('Export includes inactive and uninstalled rules; empty import clears seeds without resurrection', async ({window}) => {
+    const {api, optionsFull, clipboard, render} = await setupSearch();
+    mockRulePersistence(api, optionsFull);
+    const rules = [
+        {dictionary: 'Dictionary A', revision: 'old', path: 'label.svg', action: 'replace', text: 'Inactive'},
+        {dictionary: 'Uninstalled dictionary', revision: 'v1', path: 'photo.png', action: 'omit'},
+    ];
+    await importRules({version: 1, rules});
+    /** @type {Blob | null} */
+    let exported = null;
+    window.URL.createObjectURL = vi.fn((/** @type {Blob|MediaSource} */ blob) => {
+        exported = /** @type {Blob} */ (blob);
+        return 'blob:rules';
+    });
+    const revoke = vi.fn();
+    window.URL.revokeObjectURL = revoke;
+    let filename = '';
+    /** @this {HTMLAnchorElement} */
+    function download() { filename = this.download; }
+    vi.spyOn(window.HTMLAnchorElement.prototype, 'click').mockImplementation(download);
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '#copy-image-rules-export')).click();
+    expect(filename).toBe('yomitan-copy-image-rules.json');
+    const text = await new Promise((/** @type {(value: string) => void} */ resolve) => {
+        const reader = new FileReader();
+        reader.onload = () => { resolve(/** @type {string} */ (reader.result)); };
+        reader.readAsText(/** @type {Blob} */ (exported));
+    });
+    expect(parseJson(text)).toEqual({version: 1, rules});
+    await vi.waitFor(() => { expect(revoke).toHaveBeenCalledWith('blob:rules'); }, {timeout: 2000});
+    await importRules(text);
+    expect(optionsFull.global.copyImageRules).toEqual(rules);
+    await importRules({version: 1, rules: []});
+    const util = new OptionsUtil();
+    await util.prepare();
+    const reloaded = await util.update(structuredClone(optionsFull));
+    expect(reloaded.global.copyImageRules).toEqual([]);
+    const entry = createEntry('亜', ['word', {type: 'image', path: 'smk8/表記-redfill.svg'}]);
+    entry.definitions[0].dictionary = '新明解国語辞典　第八版';
+    await render([entry]);
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '[data-action="copy-entry"]')).click();
+    expect(clipboard.text).not.toContain('表記');
+    expect(querySelectorNotNull(window.document, '.copy-entry-status').textContent).toContain('1 unresolved');
+});
+
+test('Dictionary updates disable old revision rules while preserving them in Export', async ({window}) => {
+    const {api, application, optionsFull, clipboard, render} = await setupSearch();
+    mockRulePersistence(api, optionsFull);
+    const rule = {dictionary: 'Dictionary A', revision: '2026-01', path: 'label.svg', action: 'replace', text: 'Current rule'};
+    await importRules({version: 1, rules: [rule]});
+    await render([createEntry('言葉', ['word', {type: 'structured-content',
+        content: [
+            {tag: 'img', path: 'label.svg', alt: 'Metadata'}, {tag: 'img', path: 'other/label.svg', alt: 'Other path'},
+        ]}])]);
+    const copyButton = /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '[data-action="copy-entry"]'));
+    copyButton.click();
+    expect(clipboard.text).toContain('Current ruleOther path');
+    vi.spyOn(api, 'getDictionaryInfo').mockResolvedValue([{title: 'Dictionary A', revision: '2026-02', sequenced: true, version: 3, importDate: 0, prefixWildcardsSupported: false, styles: ''}]);
+    application.trigger('databaseUpdated', {type: 'dictionary', cause: 'import'});
+    await vi.waitFor(() => {
+        copyButton.click();
+        expect(clipboard.text).toContain('MetadataOther path');
+    });
+    expect(optionsFull.global.copyImageRules).toEqual([rule]);
+});
+
+test('Imported global rules survive settings reload, full settings backup update, and a different active profile', async ({window}) => {
+    const {api, optionsFull} = await setupSearch();
+    const util = new OptionsUtil();
+    await util.prepare();
+    /** @type {Record<string, unknown>} */
+    let storage = {};
+    vi.stubGlobal('chrome', {...globalThis.chrome,
+        storage: {local: {
+            set: (/** @type {Record<string, unknown>} */ values, /** @type {() => void} */ callback) => { storage = values; callback(); },
+            get: (/** @type {string[]} */ _keys, /** @type {(values: Record<string, unknown>) => void} */ callback) => { callback(storage); },
+        }}});
+    vi.spyOn(api, 'modifySettings').mockImplementation(async (targets) => {
+        for (const target of targets) {
+            if (target.action !== 'set') { throw new Error('Expected rule replacement'); }
+            new ObjectPropertyAccessor(optionsFull).set(ObjectPropertyAccessor.getPathArray(target.path), target.value);
+        }
+        await util.save(optionsFull);
+        return [{result: true}];
+    });
+    const rule = {dictionary: 'Dictionary A', revision: '2026-01', path: 'label.svg', action: 'replace', text: 'Shared saved rule'};
+    await importRules({version: 1, rules: [rule]});
+    const loaded = await util.load();
+    expect(loaded.global.copyImageRules).toEqual([rule]);
+    const fromFullBackup = await util.update(parseJson(/** @type {string} */ (storage.options)));
+    expect(fromFullBackup.global.copyImageRules).toEqual([rule]);
+    fromFullBackup.profiles.push({...structuredClone(fromFullBackup.profiles[0]), name: 'Other profile'});
+    fromFullBackup.profileCurrent = 1;
+    const settingsStorage = globalThis.chrome.storage;
+    const previousSelect = querySelectorNotNull(window.document, '#profile-select');
+    previousSelect.replaceWith(previousSelect.cloneNode(true));
+    const reopened = await setupSearch(false, 'search', fromFullBackup);
+    vi.stubGlobal('chrome', {...globalThis.chrome, storage: settingsStorage});
+    await reopened.render([createEntry('言葉', ['word', {type: 'image', path: 'label.svg', alt: 'Metadata'}])]);
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '[data-action="copy-entry"]')).click();
+    expect(reopened.clipboard.text).toContain('Shared saved rule');
+    expect(reopened.clipboard.text).not.toContain('Metadata');
+    vi.spyOn(reopened.api, 'modifySettings').mockImplementation(async (targets) => {
+        for (const target of targets) {
+            if (target.action !== 'set') { throw new Error('Expected profile selection'); }
+            new ObjectPropertyAccessor(fromFullBackup).set(ObjectPropertyAccessor.getPathArray(target.path), target.value);
+        }
+        await util.save(fromFullBackup);
+        return [{result: true}];
+    });
+    vi.spyOn(reopened.api, 'optionsGet').mockImplementation(async () => fromFullBackup.profiles[fromFullBackup.profileCurrent].options);
+    const select = /** @type {HTMLSelectElement} */ (querySelectorNotNull(window.document, '#profile-select'));
+    select.value = '0';
+    select.dispatchEvent(new Event('change'));
+    await vi.waitFor(() => { expect(fromFullBackup.profileCurrent).toBe(0); });
+    // The backend's options notification refreshes the active profile in an extension tab.
+    await reopened.display.updateOptions();
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '[data-action="copy-entry"]')).click();
+    expect(reopened.clipboard.text).toContain('Shared saved rule');
+});
+
+test('Pending imports publish only after storage succeeds and preserve a concurrent Copy filter save', async ({window}) => {
+    const {api, optionsFull} = await setupSearch();
+    const backend = new Backend(new WebExtension());
+    // eslint-disable-next-line no-underscore-dangle
+    await backend._optionsUtil.prepare();
+    // eslint-disable-next-line no-underscore-dangle
+    backend._options = structuredClone(optionsFull);
+    /** @type {{options: string, complete: () => void}[]} */
+    const writes = [];
+    vi.stubGlobal('chrome', {...globalThis.chrome,
+        runtime: {...globalThis.chrome.runtime,
+            // eslint-disable-next-line no-underscore-dangle
+            sendMessage: (/** @type {import('api').ApiMessageAny} */ message, /** @type {(response?: unknown) => void} */ callback) => { backend._onMessage(message, {}, callback); }},
+        tabs: {query: (/** @type {unknown} */ _details, /** @type {(tabs: chrome.tabs.Tab[]) => void} */ callback) => { callback([]); }},
+        storage: {local: {
+            set: (/** @type {{options: string}} */ values, /** @type {() => void} */ callback) => { writes.push({options: values.options, complete: callback}); },
+        }}});
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    vi.mocked(api.optionsGetFull).mockRestore();
+    const rule = {dictionary: 'Dictionary A', revision: '2026-01', path: 'label.svg', action: 'replace', text: 'Saved after persistence'};
+    const importing = importRules({version: 1, rules: [rule]});
+    await vi.waitFor(() => { expect(writes).toHaveLength(1); });
+    expect((await api.optionsGetFull()).global.copyImageRules).toEqual(optionsFull.global.copyImageRules);
+    /** @type {HTMLInputElement} */ (querySelectorNotNull(window.document, '#copy-dictionaries input')).click();
+    writes[0].complete();
+    await vi.waitFor(() => { expect(writes).toHaveLength(2); });
+    expect(parseJson(writes[1].options)).toMatchObject({
+        global: {copyImageRules: [rule]},
+        profiles: [{options: {general: {copyExcludedDictionaries: ['Dictionary A']}}}],
+    });
+    writes[1].complete();
+    await importing;
+    await vi.waitFor(async () => {
+        const saved = await api.optionsGetFull();
+        expect(saved.global.copyImageRules).toEqual([rule]);
+        expect(saved.profiles[0].options.general.copyExcludedDictionaries).toEqual(['Dictionary A']);
+    });
+});
+
+test('Copy stops using old revision rules immediately while a dictionary refresh is pending or fails', async ({window}) => {
+    const {api, application, optionsFull, clipboard, render} = await setupSearch();
+    mockRulePersistence(api, optionsFull);
+    await importRules({version: 1, rules: [{dictionary: 'Dictionary A', revision: '2026-01', path: 'label.svg', action: 'replace', text: 'Old revision text'}]});
+    await render([createEntry('言葉', ['word', {type: 'image', path: 'label.svg', alt: 'Metadata'}])]);
+    const button = /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '[data-action="copy-entry"]'));
+    /** @type {(reason: Error) => void} */
+    let fail = () => {};
+    vi.spyOn(api, 'getDictionaryInfo').mockImplementation(async () => new Promise((_resolve, reject) => { fail = reject; }));
+    application.trigger('databaseUpdated', {type: 'dictionary', cause: 'import'});
+    button.click();
+    expect(clipboard.text).toContain('Metadata');
+    expect(clipboard.text).not.toContain('Old revision text');
+    fail(new Error('Dictionary info unavailable'));
+    await vi.waitFor(() => { expect(querySelectorNotNull(window.document, '#copy-options-status').textContent).toContain('Could not read dictionary revisions'); });
+    button.click();
+    expect(clipboard.text).toContain('Metadata');
+    expect(clipboard.text).not.toContain('Old revision text');
+});
+
+test('An older dictionary refresh response cannot restore superseded revision rules', async ({window}) => {
+    const {api, application, optionsFull, clipboard, render} = await setupSearch();
+    mockRulePersistence(api, optionsFull);
+    await importRules({version: 1,
+        rules: [
+            {dictionary: 'Dictionary A', revision: '2026-01', path: 'label.svg', action: 'replace', text: 'Old revision text'},
+            {dictionary: 'Dictionary A', revision: '2026-02', path: 'label.svg', action: 'replace', text: 'Current revision text'},
+        ]});
+    await render([createEntry('言葉', ['word', {type: 'image', path: 'label.svg', alt: 'Metadata'}])]);
+    /** @type {(summaries: import('dictionary-importer').Summary[]) => void} */
+    let completeOld = () => {};
+    const oldResponse = new Promise((/** @type {(value: import('dictionary-importer').Summary[]) => void} */ resolve) => { completeOld = resolve; });
+    const summary = {title: 'Dictionary A', revision: '2026-02', sequenced: true, version: 3, importDate: 0, prefixWildcardsSupported: false, styles: ''};
+    vi.spyOn(api, 'getDictionaryInfo').mockReturnValueOnce(oldResponse).mockResolvedValue([summary]);
+    application.trigger('databaseUpdated', {type: 'dictionary', cause: 'import'});
+    application.trigger('databaseUpdated', {type: 'dictionary', cause: 'import'});
+    const button = /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '[data-action="copy-entry"]'));
+    await vi.waitFor(() => {
+        button.click();
+        expect(clipboard.text).toContain('Current revision text');
+    });
+    completeOld([{...summary, revision: '2026-01'}]);
+    await oldResponse;
+    button.click();
+    expect(clipboard.text).toContain('Current revision text');
+    expect(clipboard.text).not.toContain('Old revision text');
+});
+
+
+test('Image inspector targets one entry, includes collapsed assets, and defaults to deduplicated unresolved images', async ({window}) => {
+    const {document} = window;
+    const {render} = await setupSearch();
+    setupInspectorBoundary(window);
+    const entry = createEntry('言葉', [{type: 'structured-content',
+        content: {tag: 'details',
+            content: [
+                {tag: 'summary', content: 'Usage'},
+                'Context before ',
+                {tag: 'img', path: 'label.svg'},
+                {tag: 'img', path: 'label.svg'},
+                {tag: 'img', path: 'metadata.svg', alt: 'Metadata label'},
+                ' after',
+            ]}}]);
+    await render([createEntry('neighbor', [{type: 'image', path: 'neighbor.svg'}]), entry]);
+    const button = /** @type {HTMLButtonElement} */ (querySelectorNotNull(document, '.entry[data-index="1"] [data-action="inspect-copy-images"]'));
+    button.click();
+    const dialog = querySelectorNotNull(document, '#copy-image-inspector');
+    expect(dialog.hasAttribute('open')).toBe(true);
+    expect(dialog.querySelectorAll('.copy-image-card')).toHaveLength(1);
+    expect(dialog.textContent).toContain('Dictionary A');
+    expect(dialog.textContent).toContain('2026-01');
+    expect(dialog.textContent).toContain('label.svg');
+    expect(dialog.textContent).toContain('Context before');
+    expect(dialog.textContent).not.toContain('neighbor.svg');
+    /** @type {HTMLInputElement} */ (querySelectorNotNull(dialog, '#copy-image-show-all')).click();
+    expect(dialog.querySelectorAll('.copy-image-card')).toHaveLength(2);
+    expect(dialog.textContent).toContain('Metadata: Metadata label');
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(dialog, '#copy-image-inspector-close')).click();
+    expect(dialog.hasAttribute('open')).toBe(false);
+});
+
+
+/**
+ * @param {import('jsdom').DOMWindow} window
+ * @returns {{create: ReturnType<typeof vi.fn>, revoke: ReturnType<typeof vi.fn>}}
+ */
+function setupInspectorBoundary(window) {
+    window.HTMLDialogElement.prototype.showModal = function showModal() { this.setAttribute('open', ''); };
+    window.HTMLDialogElement.prototype.close = function close() {
+        this.removeAttribute('open');
+        this.dispatchEvent(new Event('close'));
+    };
+    const create = vi.fn().mockReturnValue('blob:dictionary-image');
+    const revoke = vi.fn();
+    window.URL.createObjectURL = create;
+    window.URL.revokeObjectURL = revoke;
+    return {create, revoke};
+}
+
+test('Inspector shows a duplicate asset as unresolved whenever any occurrence lacks metadata', async ({window}) => {
+    const {document} = window;
+    setupInspectorBoundary(window);
+    const {render} = await setupSearch();
+    await render([createEntry('言葉', [{type: 'structured-content',
+        content: [
+            'word ',
+            {tag: 'img', path: 'label.svg'},
+            {tag: 'img', path: 'label.svg', alt: 'Label'},
+            {tag: 'img', path: 'other.svg', alt: 'Other label'},
+            {tag: 'img', path: 'other.svg'},
+        ]}])]);
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(document, '[data-action="copy-entry"]')).click();
+    expect(querySelectorNotNull(document, '.copy-entry-status').textContent).toBe('Copied. 2 unresolved image(s) omitted.');
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(document, '[data-action="inspect-copy-images"]')).click();
+    expect(document.querySelectorAll('.copy-image-card')).toHaveLength(2);
+    expect([...document.querySelectorAll('.copy-image-handling')].map((element) => element.textContent)).toEqual(['Unresolved', 'Unresolved']);
+    expect([...document.querySelectorAll('.copy-image-path')].map((element) => element.textContent)).toEqual(['label.svg', 'other.svg']);
+    /** @type {HTMLInputElement} */ (querySelectorNotNull(document, '#copy-image-show-all')).click();
+    expect(document.querySelectorAll('.copy-image-card')).toHaveLength(2);
+});
+
+test('Inspector preserves native editing keys instead of running search hotkeys', async ({window}) => {
+    const {document} = window;
+    setupInspectorBoundary(window);
+    const {display, application, render} = await setupSearch();
+    display.hotkeyHandler.prepare(application.crossFrame);
+    display.hotkeyHandler.setHotkeys('search', ['Escape', 'ArrowDown', 'KeyK'].map((key) => ({
+        action: 'focusSearchBox', argument: '', key, modifiers: key === 'KeyK' ? ['ctrl', 'shift'] : [], scopes: ['search'], enabled: true,
+    })));
+    await render([createEntry('言葉', [{type: 'image', path: 'label.svg'}])]);
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(document, '[data-action="inspect-copy-images"]')).click();
+    const editor = /** @type {HTMLTextAreaElement} */ (querySelectorNotNull(document, '.copy-image-text'));
+    editor.focus();
+    for (const options of [
+        {key: 'Escape', code: 'Escape'},
+        {key: 'ArrowDown', code: 'ArrowDown'},
+        {key: 'K', code: 'KeyK', ctrlKey: true, shiftKey: true},
+        {key: 'u', code: 'KeyU', ctrlKey: true},
+    ]) {
+        const event = new KeyboardEvent('keydown', {bubbles: true, cancelable: true, ...options});
+        editor.dispatchEvent(event);
+        expect(event.defaultPrevented).toBe(false);
+        expect(document.activeElement).toBe(editor);
+    }
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(document, '#copy-image-inspector-close')).click();
+    const outside = new KeyboardEvent('keydown', {key: 'Escape', code: 'Escape', bubbles: true, cancelable: true});
+    document.dispatchEvent(outside);
+    expect(outside.defaultPrevented).toBe(true);
+    expect(document.activeElement).toBe(querySelectorNotNull(document, '#search-textbox'));
+});
+
+test('Inspector leaves native paste in its editor instead of replacing the search query', async ({window}) => {
+    const {document} = window;
+    setupInspectorBoundary(window);
+    const {api, render} = await setupSearch();
+    vi.spyOn(api, 'termsFind').mockResolvedValue({dictionaryEntries: [], originalTextLength: 0});
+    await render([createEntry('言葉', [{type: 'image', path: 'label.svg'}])]);
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(document, '[data-action="inspect-copy-images"]')).click();
+    const editor = /** @type {HTMLTextAreaElement} */ (querySelectorNotNull(document, '.copy-image-text'));
+    editor.focus();
+    const event = new Event('paste', {bubbles: true, cancelable: true});
+    Object.defineProperty(event, 'clipboardData', {value: {getData: () => 'Recovered label'}});
+    editor.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(false);
+    expect(/** @type {HTMLTextAreaElement} */ (querySelectorNotNull(document, '#search-textbox')).value).toBe('言葉');
+    expect(document.activeElement).toBe(editor);
+});
+
+test('Inspector saves replacement, edits omission, and deletes one rule without writing the clipboard', async ({window}) => {
+    const {document} = window;
+    setupInspectorBoundary(window);
+    const {api, optionsFull, clipboard, copy, render} = await setupSearch();
+    mockRulePersistence(api, optionsFull);
+    await render([createEntry('言葉', [{type: 'structured-content', content: ['before ', {tag: 'img', path: 'label.svg'}, ' after']}])]);
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(document, '[data-action="inspect-copy-images"]')).click();
+    /** @type {HTMLTextAreaElement} */ (querySelectorNotNull(document, '.copy-image-text')).value = 'Recovered label';
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(document, '[data-action="save-copy-image-rule"]')).click();
+    await vi.waitFor(() => { expect(querySelectorNotNull(document, '#copy-image-inspector-status').textContent).toBe('Rule saved. Copy again to use it.'); });
+    expect(copy).not.toHaveBeenCalled();
+    expect(clipboard.text).toBe('previous clipboard');
+    expect(document.querySelectorAll('.copy-image-card')).toHaveLength(0);
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(document, '[data-action="copy-entry"]')).click();
+    expect(clipboard.text).toContain('before Recovered label after');
+    /** @type {HTMLInputElement} */ (querySelectorNotNull(document, '#copy-image-show-all')).click();
+    expect(/** @type {HTMLTextAreaElement} */ (querySelectorNotNull(document, '.copy-image-text')).value).toBe('Recovered label');
+    const action = /** @type {HTMLSelectElement} */ (querySelectorNotNull(document, '.copy-image-action'));
+    action.value = 'omit';
+    action.dispatchEvent(new Event('change'));
+    expect(/** @type {HTMLTextAreaElement} */ (querySelectorNotNull(document, '.copy-image-text')).disabled).toBe(true);
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(document, '[data-action="save-copy-image-rule"]')).click();
+    await vi.waitFor(() => { expect(querySelectorNotNull(document, '.copy-image-handling').textContent).toBe('User omission'); });
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(document, '[data-action="copy-entry"]')).click();
+    expect(clipboard.text).toContain('before  after');
+    expect(querySelectorNotNull(document, '.copy-entry-status').textContent).toBe('Copied.');
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(document, '[data-action="delete-copy-image-rule"]')).click();
+    await vi.waitFor(() => { expect(querySelectorNotNull(document, '#copy-image-inspector-status').textContent).toBe('Rule deleted. Copy again to use the current handling.'); });
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(document, '[data-action="copy-entry"]')).click();
+    expect(querySelectorNotNull(document, '.copy-entry-status').textContent).toBe('Copied. 1 unresolved image(s) omitted.');
+});
+
+
+test('Inspector previews and opens the original media, revokes URLs on close, and reports missing or unreadable images', async ({window}) => {
+    const {document} = window;
+    const {revoke} = setupInspectorBoundary(window);
+    const {api, render} = await setupSearch();
+    const content = readFileSync(new URL('data/copy-image-label.svg', import.meta.url)).toString('base64');
+    vi.spyOn(api, 'getMedia').mockImplementation(async (targets) => targets.flatMap(({dictionary, path}) => (path === 'missing.svg' ? [] : [{dictionary, path, mediaType: 'image/svg+xml', content, width: 100, height: 40}])));
+    await render([createEntry('言葉', [{type: 'image', path: 'label.svg'}, {type: 'image', path: 'missing.svg'}])]);
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(document, '[data-action="inspect-copy-images"]')).click();
+    await vi.waitFor(() => { expect(document.querySelector('#copy-image-inspector img')).not.toBeNull(); });
+    const image = /** @type {HTMLImageElement} */ (querySelectorNotNull(document, '#copy-image-inspector img'));
+    expect(image.src).toBe('blob:dictionary-image');
+    const link = /** @type {HTMLAnchorElement} */ (querySelectorNotNull(document, '#copy-image-inspector a'));
+    expect(link.href).toBe(image.src);
+    expect(link.target).toBe('_blank');
+    expect(link.rel).toContain('noopener');
+    expect(querySelectorNotNull(document, '#copy-image-inspector').textContent).toContain('Could not load this image');
+    image.dispatchEvent(new Event('error'));
+    expect(querySelectorNotNull(document, '.copy-image-media').textContent).toContain('Could not display this image');
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(document, '#copy-image-inspector-close')).click();
+    expect(revoke).toHaveBeenCalledWith('blob:dictionary-image');
+});
+
+
+test('Inspector retains inactive revision rules until each current image is reviewed and saved', async ({window}) => {
+    const {document} = window;
+    setupInspectorBoundary(window);
+    const {api, application, optionsFull, clipboard, render} = await setupSearch();
+    mockRulePersistence(api, optionsFull);
+    await importRules({version: 1, rules: [{dictionary: 'Dictionary A', revision: 'old-revision', path: 'label.svg', action: 'replace', text: 'Old label'}]});
+    await render([createEntry('言葉', ['word', {type: 'image', path: 'label.svg'}])]);
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(document, '[data-action="inspect-copy-images"]')).click();
+    expect(querySelectorNotNull(document, '.copy-image-inactive').textContent).toBe('Inactive rule (old-revision): Old label');
+    expect(/** @type {HTMLTextAreaElement} */ (querySelectorNotNull(document, '.copy-image-text')).value).toBe('');
+    /** @type {HTMLTextAreaElement} */ (querySelectorNotNull(document, '.copy-image-text')).value = 'Reviewed current label';
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(document, '[data-action="save-copy-image-rule"]')).click();
+    await vi.waitFor(() => { expect(querySelectorNotNull(document, '#copy-image-inspector-status').textContent).toBe('Rule saved. Copy again to use it.'); });
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(document, '[data-action="copy-entry"]')).click();
+    expect(clipboard.text).toContain('Reviewed current label');
+    const next = await api.getDictionaryInfo();
+    vi.spyOn(api, 'getDictionaryInfo').mockResolvedValue(next.map((value) => ({...value, revision: 'new-revision'})));
+    application.trigger('databaseUpdated', {type: 'dictionary', cause: 'import'});
+    expect(querySelectorNotNull(document, '#copy-image-inspector').hasAttribute('open')).toBe(false);
+    await vi.waitFor(() => {
+        /** @type {HTMLButtonElement} */ (querySelectorNotNull(document, '[data-action="inspect-copy-images"]')).click();
+        expect(querySelectorNotNull(document, '.copy-image-revision').textContent).toBe('new-revision');
+    });
+    expect(querySelectorNotNull(document, '.copy-image-inactive').textContent).toContain('Inactive rule (2026-01): Reviewed current label');
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(document, '[data-action="copy-entry"]')).click();
+    expect(clipboard.text).not.toContain('Reviewed current label');
+    expect(optionsFull.global.copyImageRules.map(({revision}) => revision)).toEqual(['old-revision', '2026-01']);
+});
+
+test('Inspector save failure retains the previous handling and entered text for retry', async ({window}) => {
+    const {document} = window;
+    setupInspectorBoundary(window);
+    const {api, clipboard, render} = await setupSearch();
+    vi.spyOn(api, 'modifySettings').mockRejectedValue(new Error('Storage unavailable'));
+    await render([createEntry('言葉', [{type: 'image', path: 'label.svg'}])]);
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(document, '[data-action="inspect-copy-images"]')).click();
+    /** @type {HTMLTextAreaElement} */ (querySelectorNotNull(document, '.copy-image-text')).value = 'Keep for retry';
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(document, '[data-action="save-copy-image-rule"]')).click();
+    await vi.waitFor(() => { expect(querySelectorNotNull(document, '#copy-image-inspector-status').textContent).toContain('Storage unavailable'); });
+    expect(/** @type {HTMLTextAreaElement} */ (querySelectorNotNull(document, '.copy-image-text')).value).toBe('Keep for retry');
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(document, '[data-action="copy-entry"]')).click();
+    expect(clipboard.text).toBe('previous clipboard');
+    expect(querySelectorNotNull(document, '.copy-entry-status').textContent).toBe('No dictionary content to copy.');
+});
+
+
+test('Closing the inspector prevents a pending media request from creating unused preview URLs', async ({window}) => {
+    const {document} = window;
+    const {create} = setupInspectorBoundary(window);
+    const {api, render} = await setupSearch();
+    /** @type {(value: import('dictionary-database').MediaDataStringContent[]) => void} */
+    let complete = () => {};
+    vi.spyOn(api, 'getMedia').mockImplementation(() => new Promise((resolve) => { complete = resolve; }));
+    await render([createEntry('言葉', [{type: 'image', path: 'label.svg'}])]);
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(document, '[data-action="inspect-copy-images"]')).click();
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(document, '#copy-image-inspector-close')).click();
+    complete([{dictionary: 'Dictionary A', path: 'label.svg', mediaType: 'image/svg+xml', content: 'WA==', width: 1, height: 1}]);
+    await new Promise((resolve) => { setTimeout(resolve, 0); });
+    expect(create).not.toHaveBeenCalled();
+});
+
+
+test('Inspector excludes dictionary images before inspection and keeps separate exact paths', async ({window}) => {
+    const {document} = window;
+    setupInspectorBoundary(window);
+    const {api, render} = await setupSearch();
+    vi.spyOn(api, 'modifySettings').mockResolvedValue([{result: true}]);
+    const entry = createEntry('言葉', [{type: 'image', path: 'label.svg'}]);
+    entry.definitions.push({...entry.definitions[0],
+        dictionary: 'Dictionary B',
+        dictionaryAlias: 'Alias',
+        entries: [
+            {type: 'image', path: 'images/label.svg'}, {type: 'image', path: 'label.svg'},
+        ]});
+    await render([entry]);
+    /** @type {HTMLInputElement} */ (querySelectorNotNull(document, '#copy-dictionaries input')).click();
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(document, '[data-action="inspect-copy-images"]')).click();
+    expect(document.querySelectorAll('.copy-image-card')).toHaveLength(2);
+    expect(querySelectorNotNull(document, '#copy-image-inspector-list').textContent).not.toContain('Dictionary A');
+    expect(querySelectorNotNull(document, '#copy-image-inspector-list').textContent).toContain('Dictionary B');
+    expect(querySelectorNotNull(document, '#copy-image-inspector-list').textContent).not.toContain('Alias');
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(document, '#copy-image-inspector-close')).click();
+    await render([createEntry('new result', ['word'])]);
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(document, '[data-action="inspect-copy-images"]')).click();
+    expect(querySelectorNotNull(document, '#copy-image-inspector-list').textContent).toContain('No unresolved images');
 });

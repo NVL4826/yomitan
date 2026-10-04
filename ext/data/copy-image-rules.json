@@ -1,0 +1,110 @@
+{
+    "version": 1,
+    "rules": [
+        {
+            "dictionary": "新明解国語辞典\u3000第八版",
+            "revision": "smk8;2023-07-09",
+            "path": "smk8/かぞえ方-default.svg",
+            "action": "replace",
+            "text": "かぞえ方"
+        },
+        {
+            "dictionary": "新明解国語辞典\u3000第八版",
+            "revision": "smk8;2023-07-09",
+            "path": "smk8/一-fill.svg",
+            "action": "replace",
+            "text": "一"
+        },
+        {
+            "dictionary": "新明解国語辞典\u3000第八版",
+            "revision": "smk8;2023-07-09",
+            "path": "smk8/二-fill.svg",
+            "action": "replace",
+            "text": "二"
+        },
+        {
+            "dictionary": "新明解国語辞典\u3000第八版",
+            "revision": "smk8;2023-07-09",
+            "path": "smk8/三-fill.svg",
+            "action": "replace",
+            "text": "三"
+        },
+        {
+            "dictionary": "新明解国語辞典\u3000第八版",
+            "revision": "smk8;2023-07-09",
+            "path": "smk8/四-fill.svg",
+            "action": "replace",
+            "text": "四"
+        },
+        {
+            "dictionary": "新明解国語辞典\u3000第八版",
+            "revision": "smk8;2023-07-09",
+            "path": "smk8/五-fill.svg",
+            "action": "replace",
+            "text": "五"
+        },
+        {
+            "dictionary": "新明解国語辞典\u3000第八版",
+            "revision": "smk8;2023-07-09",
+            "path": "smk8/六-fill.svg",
+            "action": "replace",
+            "text": "六"
+        },
+        {
+            "dictionary": "新明解国語辞典\u3000第八版",
+            "revision": "smk8;2023-07-09",
+            "path": "smk8/他動-default.svg",
+            "action": "replace",
+            "text": "他動"
+        },
+        {
+            "dictionary": "新明解国語辞典\u3000第八版",
+            "revision": "smk8;2023-07-09",
+            "path": "smk8/動-default.svg",
+            "action": "replace",
+            "text": "動"
+        },
+        {
+            "dictionary": "新明解国語辞典\u3000第八版",
+            "revision": "smk8;2023-07-09",
+            "path": "smk8/名-default.svg",
+            "action": "replace",
+            "text": "名"
+        },
+        {
+            "dictionary": "新明解国語辞典\u3000第八版",
+            "revision": "smk8;2023-07-09",
+            "path": "smk8/文法-red.svg",
+            "action": "replace",
+            "text": "文法"
+        },
+        {
+            "dictionary": "新明解国語辞典\u3000第八版",
+            "revision": "smk8;2023-07-09",
+            "path": "smk8/派-default.svg",
+            "action": "replace",
+            "text": "派"
+        },
+        {
+            "dictionary": "新明解国語辞典\u3000第八版",
+            "revision": "smk8;2023-07-09",
+            "path": "smk8/自動-default.svg",
+            "action": "replace",
+            "text": "自動"
+        },
+        {
+            "dictionary": "新明解国語辞典\u3000第八版",
+            "revision": "smk8;2023-07-09",
+            "path": "smk8/表記-redfill.svg",
+            "action": "replace",
+            "text": "表記"
+        },
+        {
+            "dictionary": "新明解国語辞典\u3000第八版",
+            "revision": "smk8;2023-07-09",
+            "path": "smk8/運用-fill.svg",
+            "action": "replace",
+            "text": "運用"
+        }
+    ]
+}

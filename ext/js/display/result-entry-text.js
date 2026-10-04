@@ -18,13 +18,19 @@
 /**
  * @param {import('dictionary').TermDictionaryEntry} entry
  * @param {Set<string>} [excludedDictionaries]
- * @returns {{text: string, unresolvedImages: number}}
+ * @param {import('settings').CopyImageRule[]} [rules]
+ * @param {Map<string, string>} [revisions]
+ * @returns {{text: string, unresolvedImages: number, images: CopyImageOutcome[]}}
  */
-export function getResultEntryText(entry, excludedDictionaries = new Set()) {
+export function getResultEntryText(entry, excludedDictionaries = new Set(), rules = [], revisions = new Map()) {
     const headwords = entry.headwords.map(({term, reading}) => (term === reading || reading.length === 0 ? term : `${term} (${reading})`));
     /** @type {Map<string, string[]>} */
     const sections = new Map();
-    const imageState = {unresolvedImages: 0};
+    /** @type {ImageState} */
+    const imageState = {unresolvedImages: 0,
+        images: [],
+        revisions,
+        rules: new Map(rules.map((rule) => [JSON.stringify([rule.dictionary, rule.revision, rule.path]), rule]))};
     /**
      * @param {string} dictionary
      * @param {string} text
@@ -49,6 +55,7 @@ export function getResultEntryText(entry, excludedDictionaries = new Set()) {
     }
     for (const definition of entry.definitions) {
         if (excludedDictionaries.has(definition.dictionary)) { continue; }
+        const imageStart = imageState.images.length;
         const lines = [];
         for (const content of definition.entries) {
             if (typeof content === 'string') {
@@ -59,15 +66,16 @@ export function getResultEntryText(entry, excludedDictionaries = new Set()) {
                         lines.push(content.text);
                         break;
                     case 'image':
-                        ++imageState.unresolvedImages;
+                        lines.push(getImageText(content, definition.dictionary, imageState));
                         break;
                     case 'structured-content':
-                        lines.push(getStructuredContentText(content.content, imageState));
+                        lines.push(getStructuredContentText(content.content, definition.dictionary, imageState));
                         break;
                 }
             }
         }
         const text = lines.join('\n').trim();
+        for (const image of imageState.images.slice(imageStart)) { image.context = text; }
         const tags = getTagsText(definition.tags, excludedDictionaries);
         if (text.length === 0 && tags.length === 0) { continue; }
         const variants = definition.headwordIndices.map((index) => headwords[index]).join(', ');
@@ -101,7 +109,7 @@ export function getResultEntryText(entry, excludedDictionaries = new Set()) {
                 ...[...sections].map(([dictionary, lines]) => `${dictionary}\n${lines.join('\n\n')}`),
             ].join('\n\n')
     );
-    return {text, unresolvedImages: imageState.unresolvedImages};
+    return {text, unresolvedImages: imageState.unresolvedImages, images: imageState.images};
 }
 
 /**
@@ -125,22 +133,21 @@ function getTagsText(tags, excludedDictionaries = new Set(), sourceDictionary) {
 
 /**
  * @param {import('structured-content').Content|undefined} content
- * @param {{unresolvedImages: number}} imageState
+ * @param {string} dictionary
+ * @param {ImageState} imageState
  * @returns {string}
  */
-function getStructuredContentText(content, imageState) {
+function getStructuredContentText(content, dictionary, imageState) {
     if (typeof content === 'string') { return content; }
     if (typeof content === 'undefined') { return ''; }
-    if (Array.isArray(content)) { return content.map((item) => getStructuredContentText(item, imageState)).join(''); }
+    if (Array.isArray(content)) { return content.map((item) => getStructuredContentText(item, dictionary, imageState)).join(''); }
     const {tag} = content;
     if (tag === 'img') {
-        // Only an explicit dictionary role establishes that an image is illustrative.
-        if (content.data?.role !== 'illustration') { ++imageState.unresolvedImages; }
-        return '';
+        return getImageText(content, dictionary, imageState);
     }
     if (tag === 'br') { return '\n'; }
     if (tag === 'rp') { return ''; }
-    const text = getStructuredContentText(content.content, imageState);
+    const text = getStructuredContentText(content.content, dictionary, imageState);
     switch (tag) {
         case 'rt': return `(${text})`;
         case 'td':
@@ -159,3 +166,44 @@ function getStructuredContentText(content, imageState) {
         default: return text;
     }
 }
+
+/**
+ * @param {import('structured-content').ImageElementBase} image
+ * @param {string} dictionary
+ * @param {ImageState} imageState
+ * @returns {string}
+ */
+function getImageText(image, dictionary, imageState) {
+    const {path, alt, description, title, data} = image;
+    const revision = imageState.revisions.get(dictionary) ?? '';
+    const rule = imageState.rules.get(JSON.stringify([dictionary, revision, path]));
+    /** @type {CopyImageOutcome} */
+    const outcome = {dictionary, revision, path, handling: 'unresolved', text: '', context: ''};
+    imageState.images.push(outcome);
+    if (typeof rule !== 'undefined') {
+        outcome.handling = rule.action === 'replace' ? 'user-replacement' : 'user-omission';
+        outcome.text = rule.action === 'replace' ? rule.text : '';
+        return outcome.text;
+    }
+    if (data?.role === 'illustration') {
+        outcome.handling = 'illustration';
+        return '';
+    }
+    // Hover titles alone do not establish equivalent content; require a textual role.
+    const textTitle = data?.role === 'text' || data?.role === 'label' ? title : void 0;
+    for (const value of [alt, description, textTitle]) {
+        if (typeof value !== 'string') { continue; }
+        const text = value.trim();
+        if (text.length === 0 || text === path || /^(?:image|img|picture|photo)$/i.test(text) || /(?:https?:|data:|blob:|<[^>]*>|\.(?:svg|png|jpe?g|gif|webp|bmp|avif)(?:$|[?#]))/i.test(text)) { continue; }
+        outcome.handling = 'metadata';
+        outcome.text = text;
+        return text;
+    }
+    ++imageState.unresolvedImages;
+    return '';
+}
+
+/**
+ * @typedef {{dictionary: string, revision: string, path: string, handling: 'user-replacement'|'user-omission'|'metadata'|'illustration'|'unresolved', text: string, context: string}} CopyImageOutcome
+ * @typedef {{unresolvedImages: number, images: CopyImageOutcome[], rules: Map<string, import('settings').CopyImageRule>, revisions: Map<string, string>}} ImageState
+ */

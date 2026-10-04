@@ -708,12 +708,29 @@ function createOptionsUpdatedTestData1() {
             },
         ],
         profileCurrent: 0,
-        version: 78,
+        version: 79,
         global: {
             database: {
                 prefixWildcardsSupported: false,
             },
             dataTransmissionConsentShown: false,
+            copyImageRules: [
+                {dictionary: '新明解国語辞典　第八版', revision: 'smk8;2023-07-09', path: 'smk8/かぞえ方-default.svg', action: 'replace', text: 'かぞえ方'},
+                {dictionary: '新明解国語辞典　第八版', revision: 'smk8;2023-07-09', path: 'smk8/一-fill.svg', action: 'replace', text: '一'},
+                {dictionary: '新明解国語辞典　第八版', revision: 'smk8;2023-07-09', path: 'smk8/二-fill.svg', action: 'replace', text: '二'},
+                {dictionary: '新明解国語辞典　第八版', revision: 'smk8;2023-07-09', path: 'smk8/三-fill.svg', action: 'replace', text: '三'},
+                {dictionary: '新明解国語辞典　第八版', revision: 'smk8;2023-07-09', path: 'smk8/四-fill.svg', action: 'replace', text: '四'},
+                {dictionary: '新明解国語辞典　第八版', revision: 'smk8;2023-07-09', path: 'smk8/五-fill.svg', action: 'replace', text: '五'},
+                {dictionary: '新明解国語辞典　第八版', revision: 'smk8;2023-07-09', path: 'smk8/六-fill.svg', action: 'replace', text: '六'},
+                {dictionary: '新明解国語辞典　第八版', revision: 'smk8;2023-07-09', path: 'smk8/他動-default.svg', action: 'replace', text: '他動'},
+                {dictionary: '新明解国語辞典　第八版', revision: 'smk8;2023-07-09', path: 'smk8/動-default.svg', action: 'replace', text: '動'},
+                {dictionary: '新明解国語辞典　第八版', revision: 'smk8;2023-07-09', path: 'smk8/名-default.svg', action: 'replace', text: '名'},
+                {dictionary: '新明解国語辞典　第八版', revision: 'smk8;2023-07-09', path: 'smk8/文法-red.svg', action: 'replace', text: '文法'},
+                {dictionary: '新明解国語辞典　第八版', revision: 'smk8;2023-07-09', path: 'smk8/派-default.svg', action: 'replace', text: '派'},
+                {dictionary: '新明解国語辞典　第八版', revision: 'smk8;2023-07-09', path: 'smk8/自動-default.svg', action: 'replace', text: '自動'},
+                {dictionary: '新明解国語辞典　第八版', revision: 'smk8;2023-07-09', path: 'smk8/表記-redfill.svg', action: 'replace', text: '表記'},
+                {dictionary: '新明解国語辞典　第八版', revision: 'smk8;2023-07-09', path: 'smk8/運用-fill.svg', action: 'replace', text: '運用'},
+            ],
         },
     };
 }
@@ -2113,4 +2130,21 @@ describe('OptionsUtil', () => {
             expect(fieldTemplatesActual).toStrictEqual(expected2);
         });
     });
+});
+
+test('Image rules seed once for installations and old settings, and preserve intentional replacement collections', async () => {
+    const util = new OptionsUtil();
+    await util.prepare();
+    const defaults = util.getDefault();
+    expect(defaults.global.copyImageRules).toHaveLength(15);
+    const legacy = {...defaults, version: 78, global: {database: defaults.global.database, dataTransmissionConsentShown: false}};
+    const migrated = await util.update(legacy);
+    expect(migrated.global.copyImageRules).toEqual(defaults.global.copyImageRules);
+    migrated.global.copyImageRules = [];
+    const reloaded = await util.update(migrated);
+    expect(reloaded.global.copyImageRules).toEqual([]);
+    expect(util.getDefault().global.copyImageRules).toHaveLength(15);
+    const replacement = [{dictionary: 'New dictionary', revision: 'v1', path: 'label.svg', action: 'replace', text: 'Label'}];
+    const imported = await util.update({...legacy, global: {...legacy.global, copyImageRules: replacement}});
+    expect(imported.global.copyImageRules).toEqual(replacement);
 });
