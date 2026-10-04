@@ -65,9 +65,9 @@ export type CopyImageRule = {
     dictionary: string;
     revision: string;
     path: string;
-} & ({action: 'replace'; text: string} | {action: 'omit'});
+} & ({action: 'replace', text: string} | {action: 'omit'});
 
-export type CopyImageRuleDocument = {version: 1; rules: CopyImageRule[]};
+export type CopyImageRuleDocument = {version: 1, rules: CopyImageRule[]};
 
 export type GlobalOptions = {
     copyImageRules: CopyImageRule[];
