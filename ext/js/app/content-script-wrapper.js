@@ -17,7 +17,7 @@
  */
 
 (async () => {
-    const src = chrome.runtime.getURL('js/app/content-script-main.js');
+    // The fixed path resolves only to this extension's packaged entry point.
     // eslint-disable-next-line no-unsanitized/method
-    await import(src);
+    await import(chrome.runtime.getURL('js/app/content-script-main.js'));
 })();

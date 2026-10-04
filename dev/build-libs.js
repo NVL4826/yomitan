@@ -24,6 +24,7 @@ import {createRequire} from 'module';
 import path from 'path';
 import {fileURLToPath} from 'url';
 import {parseJson} from './json.js';
+import {sourceAdaptations} from './build-source-adaptations.js';
 
 const require = createRequire(import.meta.url);
 
@@ -54,6 +55,7 @@ async function buildLib(scriptPath) {
         format: 'esm',
         outfile: path.join(extDir, 'lib', path.basename(scriptPath)),
         external: ['fs'],
+        plugins: [sourceAdaptations],
         banner: {
             js: '// @ts-nocheck',
         },

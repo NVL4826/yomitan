@@ -18,3 +18,9 @@ A retained image copy rule that does not apply to the currently installed revisi
 
 **Unresolved image**:
 An image in included dictionary content whose equivalent text or illustrative role cannot be established. Its omission is reported alongside the available copied text.
+
+### Extension Distribution
+
+**Warning-free Firefox build**:
+A Firefox distribution package that produces no warnings or errors in Mozilla's extension validation while preserving Yomitan's existing functionality.
+_Avoid_: Build with waived warnings, signing approval
