@@ -43,7 +43,7 @@ test('search clipboard', async ({page, extensionId}) => {
     await expect(page.locator('#search-textbox')).toHaveValue('あ');
 });
 
-test('copy dictionary selections work with the keyboard and survive reopening search', async ({page, context, extensionId}) => {
+test('copy format and dictionary selections work with the keyboard and survive reopening search', async ({page, context, extensionId}) => {
     await page.goto(`chrome-extension://${extensionId}/settings.html`);
     const dictionary = await createDictionaryArchiveData(path.join(root, 'test/data/dictionaries/valid-dictionary1'), 'valid-dictionary1');
     await page.locator('#dictionary-import-file-input').setInputFiles({
@@ -64,6 +64,12 @@ test('copy dictionary selections work with the keyboard and survive reopening se
     await expect(page.locator('#copy-options')).toHaveAttribute('open', '');
     const checkbox = page.getByRole('checkbox', {name: 'valid-dictionary1', exact: true});
     await page.keyboard.press('Tab');
+    const format = page.getByRole('combobox', {name: 'Copy format', exact: true});
+    await expect(format).toBeFocused();
+    await expect(format).toHaveValue('markdown');
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('Tab');
+    await expect(format).toHaveValue('text');
     await expect(checkbox).toBeFocused();
     await expect(checkbox).toBeChecked();
     await page.keyboard.press('Space');
@@ -79,6 +85,8 @@ test('copy dictionary selections work with the keyboard and survive reopening se
     await expect(reopened.locator('html')).toHaveAttribute('data-loaded', 'true');
     await reopened.locator('#copy-options summary').focus();
     await reopened.keyboard.press('Enter');
+    const retainedFormat = reopened.getByRole('combobox', {name: 'Copy format', exact: true});
+    await expect(retainedFormat).toHaveValue('text');
     const retained = reopened.getByRole('checkbox', {name: 'valid-dictionary1', exact: true});
     await expect(retained).not.toBeChecked();
     await retained.focus();
@@ -91,7 +99,17 @@ test('copy dictionary selections work with the keyboard and survive reopening se
     await pastePage.setContent('<textarea aria-label="Paste target"></textarea>');
     await pastePage.getByRole('textbox').focus();
     await pastePage.keyboard.press('Control+V');
-    await expect(pastePage.getByRole('textbox')).toHaveValue(/valid-dictionary1[\s\S]*to read/);
+    await expect(pastePage.getByRole('textbox')).toHaveValue(/1\. valid-dictionary1[\s\S]*to read/);
+    await expect(pastePage.getByRole('textbox')).not.toHaveValue(/^# /);
+
+    await retainedFormat.selectOption('markdown');
+    await reopened.locator('[data-action="copy-entry"]').first().focus();
+    await reopened.keyboard.press('Enter');
+    await expect(reopened.locator('.copy-entry-status').first()).toHaveText('Copied.');
+    await pastePage.bringToFront();
+    await pastePage.getByRole('textbox').fill('');
+    await pastePage.keyboard.press('Control+V');
+    await expect(pastePage.getByRole('textbox')).toHaveValue(/^# [\s\S]*## 1\. valid-dictionary1[\s\S]*to read/);
     await pastePage.close();
     await reopened.close();
 });

@@ -42,6 +42,14 @@ The supplied Jitendex table contributes the following structure; actual entries 
 | にっぽんご | valid form/reading combination |
 ```
 
+## Verified Jitendex source
+
+Verification used the [official published dictionary release 2026.10.03.0](https://github.com/stephenmk/stephenmk.github.io/releases/tag/2026.10.03.0), linked from [Jitendex downloads](https://jitendex.org/pages/downloads.html). Its title is `Jitendex.org [2026-10-03]` and its revision is `2026.10.03.0`. The compact 日本語 forms fixture is attributed to Stephen Kraus, Jitendex, CC BY-SA 4.0.
+
+The original forms section carries `data.content = "forms"`. The titled empty spans occur inside its tables, in cells carrying `data.class` of `form-valid`, `form-pri`, `form-irr`, `form-rare`, `form-out`, or `form-old`. The spans themselves have a title without textual content. Recognize this combination of dictionary identity, forms section, table, and cell metadata; similar class names in other contexts do not establish a content-bearing symbol.
+
+All six verified cell classes are supported without restricting their title to a fixed wording. New cell classes or symbol contexts introduced by another revision require verification before automatic recovery.
+
 ## Acceptance and verification
 
 Use the existing result-entry Copy interaction tests, stubbing the clipboard boundary. Exercise the Copy options controls and settings persistence through their existing public behavior.
@@ -63,4 +71,4 @@ Use the existing result-entry Copy interaction tests, stubbing the clipboard bou
 
 ## Relationship to existing specs
 
-This extends `copy-search-result.md`: its plain-text-only output decision will be superseded when this design is confirmed. Markdown is still a textual clipboard payload. Existing image rules described in `editable-copy-image-rules.md` remain applicable.
+This extends `copy-search-result.md`: this confirmed design supersedes its plain-text-only output decision. Markdown is still a textual clipboard payload. Existing image rules described in `editable-copy-image-rules.md` remain applicable.
