@@ -1,6 +1,6 @@
 # Editable content copy rules and reduced headword repetition
 
-Status: confirmed for implementation. The user confirmed all five design choices, including first-match precedence and editable seed mappings.
+Status: implemented and verified locally; included in [PR #13](https://github.com/NVL4826/yomitan/pull/13). The user confirmed all five design choices, including first-match precedence and editable seed mappings.
 
 ## Problem
 
