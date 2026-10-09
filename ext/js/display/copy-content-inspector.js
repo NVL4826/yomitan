@@ -88,7 +88,7 @@ export class CopyContentInspector {
     /** */
     _render() {
         if (this._entry === null) { return; }
-        const selected = this._select.value;
+        const selected = this._select.value || '0';
         this._candidates = this._controller.getCopyContentCandidates(this._entry);
         this._select.replaceChildren();
         for (const [index, {node, dictionary, ruleId}] of this._candidates.entries()) {
