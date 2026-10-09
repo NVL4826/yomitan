@@ -148,7 +148,7 @@ function getTagsText(tags, excludedDictionaries = new Set(), sourceDictionary) {
  */
 function escapeText(text, format) {
     if (format === 'text') { return text; }
-    return text.replace(/[\\`*_{}[\]<>|#&]/g, '\\$&').replace(/^([ \t]*)([-+]|\d+[.)]|[-=]{2,})(?=\s|$)/gm, (_, space, marker) => `${space}${marker.replace(/[-+.)=]/g, '\\$&')}`);
+    return text.replace(/[\\`*_{}[\]<>|#&~]/g, '\\$&').replace(/^([ \t]*)([-+]|\d+[.)]|[-=]{2,})(?=\s|$)/gm, (_, space, marker) => `${space}${marker.replace(/[-+.)=]/g, '\\$&')}`);
 }
 
 /**
@@ -171,14 +171,15 @@ function getStructuredContentText(content, dictionary, imageState, format, symbo
     if (tag === 'table') { return getTableText(content.content, dictionary, imageState, format, symbolContext === 'forms'); }
     if (tag === 'ol' || tag === 'ul') {
         const items = Array.isArray(content.content) ? content.content : [content.content];
+        const separator = format === 'markdown' ? '\n\n' : '\n';
         let index = 0;
-        return `\n${items.map((item) => {
+        return `${separator}${items.map((item) => {
             if (typeof item !== 'object' || item === null || Array.isArray(item) || item.tag !== 'li') { return getStructuredContentText(item, dictionary, imageState, format, symbolContext); }
             const marker = tag === 'ol' ? `${++index}. ` : '- ';
             const itemContext = item.data?.content === 'forms' && /^Jitendex(?:\.org)?(?:$|[ [])/i.test(dictionary) ? 'forms' : symbolContext;
             const text = getStructuredContentText(item.content, dictionary, imageState, format, itemContext).trim();
-            return marker + text.replace(/\n+/g, `\n${' '.repeat(marker.length)}`);
-        }).join('\n')}\n`;
+            return marker + text.replace(format === 'markdown' ? /\n/g : /\n+/g, `\n${' '.repeat(marker.length)}`);
+        }).join('\n')}${separator}`;
     }
     const text = getStructuredContentText(content.content, dictionary, imageState, format, symbolContext);
     if (tag === 'span' && symbolContext === 'symbol' && text.trim().length === 0 && typeof content.title === 'string') { return escapeText(content.title.trim(), format); }
@@ -295,12 +296,12 @@ function getTableText(content, dictionary, imageState, format, forms) {
         let fenceLength = 3;
         for (const [match] of text.matchAll(/`+/g)) { fenceLength = Math.max(fenceLength, match.length + 1); }
         const fence = '`'.repeat(fenceLength);
-        return `\n${fence}\n${text}\n${fence}\n`;
+        return `\n\n${fence}\n${text}\n${fence}\n\n`;
     }
     if (!rows[0].some((cell) => cell.tag === 'th')) { grid.unshift(Array.from({length: width}, () => '')); }
     const lines = grid.map((row) => `| ${row.join(' | ')} |`);
     lines.splice(1, 0, `| ${Array.from({length: width}, () => '---').join(' | ')} |`);
-    return `\n${lines.join('\n')}\n`;
+    return `\n\n${lines.join('\n')}\n\n`;
 }
 
 /**
