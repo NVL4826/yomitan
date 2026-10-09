@@ -597,6 +597,7 @@ export class OptionsUtil {
             this._updateVersion77,
             this._updateVersion78,
             this._updateVersion79,
+            this._updateVersion80,
         ];
         /* eslint-enable @typescript-eslint/unbound-method */
         if (typeof targetVersion === 'number' && targetVersion < result.length) {
@@ -1885,6 +1886,18 @@ export class OptionsUtil {
     _updateVersion79(options) {
         if (typeof options.global.copyImageRules === 'undefined') {
             options.global.copyImageRules = clone(this._copyImageRuleSeed);
+        }
+    }
+
+    /**
+     * - Defaulted result-entry Copy to Markdown for each profile.
+     * @type {import('options-util').UpdateFunction}
+     */
+    _updateVersion80(options) {
+        for (const profile of options.profiles) {
+            if (typeof profile.options.general.copyFormat === 'undefined') {
+                profile.options.general.copyFormat = 'markdown';
+            }
         }
     }
 

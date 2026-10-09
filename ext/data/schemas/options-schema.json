@@ -127,6 +127,7 @@
                                     "sortFrequencyDictionaryOrder",
                                     "stickySearchHeader",
                                     "copyExcludedDictionaries",
+                                    "copyFormat",
                                     "fontFamily",
                                     "fontSize",
                                     "lineHeight",
@@ -346,6 +347,11 @@
                                     "stickySearchHeader": {
                                         "type": "boolean",
                                         "default": false
+                                    },
+                                    "copyFormat": {
+                                        "type": "string",
+                                        "enum": ["markdown", "text"],
+                                        "default": "markdown"
                                     },
                                     "copyExcludedDictionaries": {
                                         "type": "array",

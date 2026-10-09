@@ -60,6 +60,8 @@ export class SearchDisplayController {
         this._profileSelectContainer = querySelectorNotNull(document, '#search-option-profile-select');
         /** @type {HTMLSelectElement} */
         this._profileSelect = querySelectorNotNull(document, '#profile-select');
+        /** @type {HTMLSelectElement} */
+        this._copyFormatSelect = querySelectorNotNull(document, '#copy-format');
         /** @type {HTMLElement} */
         this._wanakanaSearchOption = querySelectorNotNull(document, '#search-option-wanakana');
         /** @type {EventListenerCollection} */
@@ -78,6 +80,8 @@ export class SearchDisplayController {
         this._copyingEntry = false;
         /** @type {Set<string>} */
         this._copyExcludedDictionaries = new Set();
+        /** @type {'markdown' | 'text'} */
+        this._copyFormat = 'markdown';
         /** @type {import('settings').CopyImageRule[]} */
         this._copyImageRules = [];
         /** @type {Map<string, string>} */
@@ -140,6 +144,7 @@ export class SearchDisplayController {
         this._display.hotkeyHandler.on('keydownNonHotkey', this._onKeyDown.bind(this));
 
         this._profileSelect.addEventListener('change', this._onProfileSelectChange.bind(this), false);
+        this._copyFormatSelect.addEventListener('change', () => { void this._onCopyFormatChange(); });
         /** @type {HTMLInputElement} */
         const ruleFile = querySelectorNotNull(document, '#copy-image-rules-file');
         querySelectorNotNull(document, '#copy-image-rules-import').addEventListener('click', () => { ruleFile.click(); });
@@ -180,10 +185,11 @@ export class SearchDisplayController {
 
     /**
      * @param {import('dictionary').TermDictionaryEntry} entry
+     * @param {'markdown' | 'text'} [format]
      * @returns {ReturnType<typeof getResultEntryText>}
      */
-    getCopyEntryText(entry) {
-        return getResultEntryText(entry, this._copyExcludedDictionaries, this._copyImageRules, this._copyImageRevisions);
+    getCopyEntryText(entry, format = this._copyFormat) {
+        return getResultEntryText(entry, this._copyExcludedDictionaries, this._copyImageRules, this._copyImageRevisions, format);
     }
 
     /** @param {import('settings').CopyImageRule[]} rules */
@@ -269,7 +275,7 @@ export class SearchDisplayController {
         button.type = 'button';
         button.dataset.action = 'copy-entry';
         button.textContent = 'Copy';
-        button.title = 'Copy this result as plain text';
+        button.title = 'Copy this result using the selected Copy format';
         const status = document.createElement('div');
         status.className = 'copy-entry-status';
         status.setAttribute('role', 'status');
@@ -356,6 +362,8 @@ export class SearchDisplayController {
     /** @param {import('settings').ProfileOptions} options */
     _updateCopyOptions(options) {
         this._copyExcludedDictionaries = new Set(options.general.copyExcludedDictionaries);
+        this._copyFormat = options.general.copyFormat;
+        this._copyFormatSelect.value = this._copyFormat;
         const container = querySelectorNotNull(document, '#copy-dictionaries');
         const focusedDictionary = document.activeElement instanceof HTMLInputElement ? document.activeElement.dataset.dictionary : void 0;
         container.replaceChildren();
@@ -371,6 +379,28 @@ export class SearchDisplayController {
             row.appendChild(label);
             container.appendChild(row);
             if (name === focusedDictionary) { checkbox.focus({preventScroll: true}); }
+        }
+    }
+
+    /** */
+    async _onCopyFormatChange() {
+        const format = this._copyFormatSelect.value;
+        if (format !== 'markdown' && format !== 'text') { return; }
+        this._copyFormat = format;
+        const status = querySelectorNotNull(document, '#copy-options-status');
+        status.textContent = '';
+        try {
+            const results = await this._display.application.api.modifySettings([{
+                action: 'set',
+                path: 'general.copyFormat',
+                value: format,
+                scope: 'profile',
+                optionsContext: this._display.getOptionsContext(),
+            }], 'search-copy');
+            if (results.some(({error}) => typeof error !== 'undefined')) { throw new Error('Settings update failed'); }
+        } catch (e) {
+            await this._display.updateOptions();
+            status.textContent = 'Could not save copy options. Please try again.';
         }
     }
 
