@@ -455,14 +455,14 @@ test('Copy includes all variants, dictionary text, tags, frequencies, and struct
         return true;
     });
     /** @type {HTMLButtonElement} */ (querySelectorNotNull(document, 'button[data-action="copy-entry"]')).click();
-    expect(copiedText).toContain('言葉 (ことば)\n詞 (コトバ)');
+    expect(copiedText).toContain('# 言葉 (ことば)\n# 詞 (コトバ)');
     expect(copiedText).toContain('noun: a noun');
     expect(copiedText).toContain('word\nA second meaning');
     expect(copiedText).toContain('Dictionary B');
     expect(copiedText).toContain('Usage\n');
     expect(copiedText).toContain('Example: 言葉(ことば)を使う');
-    expect(copiedText).toContain('A note\nAnother line');
-    expect(copiedText).toContain('formal\tinformal');
+    expect(copiedText).toContain('2. A note\n   Another line');
+    expect(copiedText).toContain('| formal | informal |');
     expect(copiedText).toContain('Frequency Dictionary\nFrequency: 詞 (コトバ): 123 (common)');
     expect(copiedText).toContain('Pronunciation Dictionary\nPitch accent: 言葉 (ことば): downstep 0; nasal morae 2; devoiced morae 1');
     expect(copiedText).toContain('downstep 1,2');
@@ -687,7 +687,7 @@ test('Import replaces global rules and Copy uses exact revision rules before met
             {dictionary: 'Dictionary A', revision: '2026-01', path: 'photo.svg', action: 'omit'},
         ]});
     /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '[data-action="copy-entry"]')).click();
-    expect(clipboard.text).toContain('Before <plain text> after');
+    expect(clipboard.text).toContain('Before \\<plain text\\> after');
     expect(clipboard.text).not.toMatch(/Metadata|Caption/);
     expect(querySelectorNotNull(window.document, '.copy-entry-status').textContent).toBe('Copied.');
     expect(optionsFull.global).toHaveProperty('copyImageRules', [
@@ -1233,4 +1233,223 @@ test('Inspector excludes dictionary images before inspection and keeps separate 
     await render([createEntry('new result', ['word'])]);
     /** @type {HTMLButtonElement} */ (querySelectorNotNull(document, '[data-action="inspect-copy-images"]')).click();
     expect(querySelectorNotNull(document, '#copy-image-inspector-list').textContent).toContain('No unresolved images');
+});
+
+
+test('Copy defaults to Markdown headings and consecutive included dictionary numbers', async ({window}) => {
+    const {clipboard, render} = await setupSearch();
+    const entry = createEntry('言葉', ['word']);
+    entry.definitions.push({...entry.definitions[0], dictionary: 'Dictionary B', entries: ['second']});
+    await render([entry]);
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '[data-action="copy-entry"]')).click();
+    expect(clipboard.text).toBe('# 言葉 (ことば)\n\n## 1. Dictionary A\n言葉 (ことば)\nword\n\n## 2. Dictionary B\n言葉 (ことば)\nsecond');
+    /** @type {HTMLInputElement} */ (querySelectorNotNull(window.document, '#copy-dictionaries input[data-dictionary="Dictionary A"]')).click();
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '[data-action="copy-entry"]')).click();
+    expect(clipboard.text).toBe('# 言葉 (ことば)\n\n## 1. Dictionary B\n言葉 (ことば)\nsecond');
+});
+
+
+test('Copy escapes literal Markdown and preserves ordered and nested lists', async ({window}) => {
+    const {clipboard, render} = await setupSearch();
+    await render([createEntry('言葉', ['*literal* [link] # heading | pipe \\ backtick `', {type: 'structured-content',
+        content: {tag: 'ol',
+            content: [
+                {tag: 'li', content: ['first', {tag: 'ul', content: {tag: 'li', content: 'child'}}, 'after']},
+                {tag: 'li', content: ['second', {tag: 'br'}, 'continuation']},
+            ]}}])]);
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '[data-action="copy-entry"]')).click();
+    expect(clipboard.text).toContain(String.raw`\*literal\* \[link\] \# heading \| pipe \\ backtick \``);
+    expect(clipboard.text).toContain('1. first\n   - child\n   after\n2. second\n   continuation');
+});
+
+
+test('Copy preserves empty, merged, multiline and headerless table cells', async ({window}) => {
+    const {clipboard, render} = await setupSearch();
+    await render([createEntry('言葉', [{type: 'structured-content',
+        content: [
+            {tag: 'table',
+                content: [
+                    {tag: 'thead', content: {tag: 'tr', content: [{tag: 'th'}, {tag: 'th', content: 'A|B'}, {tag: 'th', content: 'C'}]}},
+                    {tag: 'tbody',
+                        content: [
+                            {tag: 'tr', content: [{tag: 'td', rowSpan: 2, content: 'shared'}, {tag: 'td', colSpan: 2, content: ['one', {tag: 'br'}, 'two']}]},
+                            {tag: 'tr', content: [{tag: 'td'}, {tag: 'td', content: 'last'}]},
+                        ]},
+                ]},
+            {tag: 'table', content: {tag: 'tr', content: [{tag: 'td', content: 'x'}, {tag: 'td', content: 'y'}]}},
+        ]}])]);
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '[data-action="copy-entry"]')).click();
+    expect(clipboard.text).toContain('|  | A\\|B | C |\n| --- | --- | --- |\n| shared | one; two | one; two |\n| shared |  | last |');
+    expect(clipboard.text).toContain('|  |  |\n| --- | --- |\n| x | y |');
+});
+
+
+test('Copy represents nested tables in a fenced block with readable row and column boundaries', async ({window}) => {
+    const {clipboard, render} = await setupSearch();
+    await render([createEntry('言葉', [{type: 'structured-content',
+        content: {tag: 'table',
+            content: {tag: 'tr',
+                content: [
+                    {tag: 'td', content: 'outer'},
+                    {tag: 'td',
+                        content: {tag: 'table',
+                            content: [
+                                {tag: 'tr', content: [{tag: 'td'}, {tag: 'td', content: 'a|b'}, {tag: 'td', content: 'c'}, {tag: 'td'}]},
+                                {tag: 'tr', content: [{tag: 'td', content: '```'}, {tag: 'td', content: 'd'}]},
+                            ]}},
+                ]}}}])]);
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '[data-action="copy-entry"]')).click();
+    expect(clipboard.text).toContain('\n````\nouter\t\ta|b\tc\t\n```\td\t\t\n````');
+});
+
+
+test('Copy recovers original Jitendex forms symbols only in verified source contexts', async ({window}) => {
+    const {clipboard, render} = await setupSearch();
+    // Exact forms subtree from the official 2026.10.03.0 release; CC BY-SA 4.0 Stephen Kraus.
+    const forms = /** @type {import('structured-content').StyledElement} */ (parseJson(readFileSync(new URL('data/copy-jitendex-forms.json', import.meta.url), 'utf8')));
+    const entry = createEntry('日本語', [{type: 'structured-content',
+        content: [forms,
+            {tag: 'span', title: 'unrelated tooltip'},
+            {tag: 'div', data: {content: 'forms'}, content: {tag: 'span', title: 'outside table'}},
+            {tag: 'table', content: {tag: 'tr', content: {tag: 'td', data: {class: 'form-valid'}, content: {tag: 'span', title: 'outside forms'}}}},
+            {tag: 'li',
+                data: {content: 'forms'},
+                content: {tag: 'table',
+                    content: {tag: 'tr',
+                        content: [
+                            {tag: 'td', data: {class: 'form-irr'}, content: {tag: 'span', title: 'irregular form'}},
+                            {tag: 'td', data: {class: 'form-old'}, content: {tag: 'span', title: 'old kanji form (kyūjitai)'}},
+                            {tag: 'td', data: {class: 'form-rare'}, content: {tag: 'span', title: 'rarely used form'}},
+                            {tag: 'td', data: {class: 'form-out'}, content: {tag: 'span', title: 'archaic or obsolete reading'}},
+                            {tag: 'td', data: {class: 'form-valid'}, content: {tag: 'span', title: 'original additional title'}},
+                            {tag: 'td', data: {class: 'form-valid'}, content: {tag: 'span', title: 'do not replace visible text', content: 'visible'}},
+                            {tag: 'td', data: {class: 'tooltip'}, content: {tag: 'span', title: 'unknown context'}},
+                        ]}}}]}]);
+    entry.headwords[0].reading = 'にほんご';
+    entry.definitions[0].dictionary = 'Jitendex.org [2026-10-03]';
+    await render([entry]);
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '[data-action="copy-entry"]')).click();
+    expect(clipboard.text).toContain('|  | 日本語 |\n| --- | --- |\n| にほんご | high priority form |\n| にっぽんご | valid form/reading combination |');
+    expect(clipboard.text).toContain('| irregular form | old kanji form (kyūjitai) | rarely used form | archaic or obsolete reading | original additional title | visible |  |');
+    expect(clipboard.text).not.toMatch(/unrelated tooltip|outside table|outside forms|do not replace|unknown context/);
+    entry.definitions[0].dictionary = 'Dictionary A';
+    await render([entry]);
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '[data-action="copy-entry"]')).click();
+    expect(clipboard.text).not.toMatch(/high priority form|valid form\/reading|irregular form|original additional title/);
+});
+
+
+test('Copy recovers titled form cells inside Jitendex sense-group lists', async ({window}) => {
+    const {clipboard, render} = await setupSearch();
+    const entry = createEntry('言葉', [{type: 'structured-content', content: {tag: 'ul', data: {content: 'sense-groups'}, content: {tag: 'li', data: {content: 'forms'}, content: {tag: 'table', content: {tag: 'tr', content: {tag: 'td', data: {class: 'form-out'}, content: {tag: 'span', title: 'archaic or obsolete reading'}}}}}}}]);
+    entry.definitions[0].dictionary = 'Jitendex.org [2026-10-03]';
+    await render([entry]);
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '[data-action="copy-entry"]')).click();
+    expect(clipboard.text).toContain('archaic or obsolete reading');
+});
+
+
+test('Copy retains source cells when table spans would expand excessively or are malformed', async ({window}) => {
+    const {clipboard, render} = await setupSearch();
+    const cases = [Number.MAX_SAFE_INTEGER, Infinity, -1, 1.5, Number.NaN];
+    for (const colSpan of cases) {
+        await render([createEntry('言葉', [{type: 'structured-content',
+            content: {tag: 'table',
+                content: {tag: 'tr',
+                    content: [
+                        {tag: 'td', colSpan, content: '*original*'}, {tag: 'td', content: 'last'},
+                    ]}}}])]);
+        /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '[data-action="copy-entry"]')).click();
+        expect(clipboard.text).toContain('\n```\n*original*\tlast\n```');
+        expect(clipboard.text.length).toBeLessThan(200);
+    }
+});
+
+
+test('Copy avoids multiplying large cell text by a large span', async ({window}) => {
+    const {clipboard, render} = await setupSearch();
+    const text = 'original'.repeat(100);
+    await render([createEntry('言葉', [{type: 'structured-content', content: {tag: 'table', content: {tag: 'tr', content: {tag: 'td', colSpan: 9999, content: text}}}}])]);
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '[data-action="copy-entry"]')).click();
+    expect(clipboard.text.length).toBeLessThan(2000);
+    expect(clipboard.text).toContain(`\n\`\`\`\n${text}\n\`\`\``);
+});
+
+
+test('Copy protects literal entity, rule, and numbered-list text from Markdown interpretation', async ({window}) => {
+    const {clipboard, render} = await setupSearch();
+    await render([createEntry('言葉', ['&copy;\n---\n===\n1. literal\n- literal'])]);
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '[data-action="copy-entry"]')).click();
+    expect(clipboard.text).toContain(String.raw`\&copy;
+\-\-\-
+\=\=\=
+1\. literal
+\- literal`);
+});
+
+
+test('Copy keeps image counts and readable inspector context with empty table cells', async ({window}) => {
+    const {clipboard, render} = await setupSearch();
+    setupInspectorBoundary(window);
+    await render([createEntry('言葉', [{type: 'structured-content',
+        content: [
+            {tag: 'table',
+                content: [
+                    {tag: 'tr', content: [{tag: 'th'}, {tag: 'th', content: 'Header'}, {tag: 'th'}]},
+                    {tag: 'tr', content: [{tag: 'td', content: 'reading'}, {tag: 'td', content: {tag: 'img', path: 'label.svg', alt: 'Label'}}, {tag: 'td'}]},
+                ]},
+            'before *literal* ',
+            {tag: 'img', path: 'unknown.svg'},
+            'after',
+        ]}])]);
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '[data-action="copy-entry"]')).click();
+    expect(clipboard.text).toContain('| reading | Label |  |');
+    expect(querySelectorNotNull(window.document, '.copy-entry-status').textContent).toBe('Copied. 1 unresolved image(s) omitted.');
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '[data-action="inspect-copy-images"]')).click();
+    expect(querySelectorNotNull(window.document, '.copy-image-context').textContent).toBe('\tHeader\t\nreading\tLabel\t\nbefore *literal* after');
+});
+
+
+test('Copy plain text retains literal text, numbering, variants, table boundaries and recovered symbols', async ({window}) => {
+    const {api, clipboard, render} = await setupSearch();
+    vi.spyOn(api, 'modifySettings').mockResolvedValue([{result: true}]);
+    const forms = /** @type {import('structured-content').Content} */ (parseJson(readFileSync(new URL('data/copy-jitendex-forms.json', import.meta.url), 'utf8')));
+    const entry = createEntry('日本語', ['*literal* | [note]', {type: 'structured-content',
+        content: [forms,
+            {tag: 'ol', content: [{tag: 'li', content: 'first'}, {tag: 'li', content: 'second'}]},
+            {tag: 'table',
+                content: [
+                    {tag: 'tr', content: [{tag: 'td', rowSpan: 2, content: 'shared'}, {tag: 'td', colSpan: 2, content: ['one', {tag: 'br'}, 'two']}]},
+                    {tag: 'tr', content: [{tag: 'td'}, {tag: 'td', content: 'last'}]},
+                ]}]}]);
+    entry.headwords[0].reading = 'にほんご';
+    entry.headwords.push({...entry.headwords[0], index: 1, headwordIndex: 1, term: '詞', reading: 'コトバ'});
+    entry.definitions[0].dictionary = 'Jitendex.org [2026-10-03]';
+    entry.definitions[0].headwordIndices = [0, 1];
+    entry.definitions.push({...entry.definitions[0], dictionary: 'Dictionary A', entries: ['other']});
+    await render([entry]);
+    const format = /** @type {HTMLSelectElement} */ (querySelectorNotNull(window.document, '#copy-format'));
+    format.value = 'text';
+    format.dispatchEvent(new Event('change'));
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '[data-action="copy-entry"]')).click();
+    expect(clipboard.text).toContain('日本語 (にほんご)\n詞 (コトバ)\n\n1. Jitendex.org [2026-10-03]');
+    expect(clipboard.text).toContain('日本語 (にほんご), 詞 (コトバ)\n*literal* | [note]');
+    expect(clipboard.text).toContain('\t日本語\nにほんご\thigh priority form\nにっぽんご\tvalid form/reading combination');
+    expect(clipboard.text).toContain('1. first\n2. second');
+    expect(clipboard.text).toContain('shared\tone; two\tone; two\nshared\t\tlast');
+    expect(clipboard.text).toContain('\n\n2. Dictionary A');
+    expect(clipboard.text).not.toMatch(/^#|^\| ---/m);
+    /** @type {HTMLInputElement} */ (querySelectorNotNull(window.document, '#copy-dictionaries input[data-dictionary="Dictionary A"]')).click();
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '[data-action="copy-entry"]')).click();
+    expect(clipboard.text).not.toContain('Dictionary A');
+    expect(clipboard.text).toContain('1. Jitendex.org [2026-10-03]');
+});
+
+
+test('Copy preserves the clipboard when a table contains only unresolved images', async ({window}) => {
+    const {clipboard, render} = await setupSearch();
+    await render([createEntry('言葉', [{type: 'structured-content', content: {tag: 'table', content: {tag: 'tr', content: {tag: 'td', content: {tag: 'img', path: 'unknown.svg'}}}}}])]);
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '[data-action="copy-entry"]')).click();
+    expect(clipboard.text).toBe('previous clipboard');
+    expect(querySelectorNotNull(window.document, '.copy-entry-status').textContent).toBe('No dictionary content to copy.');
 });
