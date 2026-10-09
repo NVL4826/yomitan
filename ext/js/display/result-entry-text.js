@@ -15,23 +15,28 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+import {findCopyContentRule} from './copy-content-rules.js';
+
 /**
  * @param {import('dictionary').TermDictionaryEntry} entry
  * @param {Set<string>} [excludedDictionaries]
  * @param {import('settings').CopyImageRule[]} [rules]
  * @param {Map<string, string>} [revisions]
  * @param {'markdown'|'text'} [format]
+ * @param {{contentRules?: import('settings').CopyContentRule[], reduceHeadwordRepetition?: boolean}} [options]
  * @returns {{text: string, unresolvedImages: number, images: CopyImageOutcome[]}}
  */
-export function getResultEntryText(entry, excludedDictionaries = new Set(), rules = [], revisions = new Map(), format = 'markdown') {
+export function getResultEntryText(entry, excludedDictionaries = new Set(), rules = [], revisions = new Map(), format = 'markdown', options = {}) {
     const literal = (/** @type {string} */ text) => escapeText(text, format);
     const headwords = entry.headwords.map(({term, reading}) => (term === reading || reading.length === 0 ? term : `${term} (${reading})`));
+    const headingLabels = new Set(headwords);
     /** @type {Map<string, string[]>} */
     const sections = new Map();
     /** @type {ImageState} */
     const imageState = {unresolvedImages: 0,
         images: [],
         revisions,
+        contentRules: options.contentRules ?? [],
         rules: new Map(rules.map((rule) => [JSON.stringify([rule.dictionary, rule.revision, rule.path]), rule]))};
     /**
      * @param {string} dictionary
@@ -88,7 +93,9 @@ export function getResultEntryText(entry, excludedDictionaries = new Set(), rule
         }
         const tags = getTagsText(definition.tags, excludedDictionaries);
         if (text.trim().length === 0 && tags.length === 0) { continue; }
-        const variants = definition.headwordIndices.map((index) => literal(headwords[index])).join(', ');
+        const definitionLabels = new Set(definition.headwordIndices.map((index) => headwords[index]));
+        const redundant = options.reduceHeadwordRepetition && definitionLabels.size === headingLabels.size && [...definitionLabels].every((label) => headingLabels.has(label));
+        const variants = redundant ? '' : definition.headwordIndices.map((index) => literal(headwords[index])).join(', ');
         append(definition.dictionary, [variants, tags.length > 0 ? literal(`[${tags}]`) : '', text].filter((line) => line.length > 0).join('\n'));
     }
     for (const frequency of entry.frequencies) {
@@ -156,33 +163,78 @@ function escapeText(text, format) {
  * @param {string} dictionary
  * @param {ImageState} imageState
  * @param {'markdown'|'text'} format
- * @param {''|'forms'|'symbol'} [symbolContext]
+ * @param {import('structured-content').Element[]} [ancestors]
+ * @param {'normal'|'list-item'|'table-cell'|'table-fallback'} [layout]
  * @returns {string}
  */
-function getStructuredContentText(content, dictionary, imageState, format, symbolContext = '') {
+function getStructuredContentText(content, dictionary, imageState, format, ancestors = [], layout = 'normal') {
     if (typeof content === 'string') { return escapeText(content, format); }
     if (typeof content === 'undefined') { return ''; }
-    if (Array.isArray(content)) { return content.map((item) => getStructuredContentText(item, dictionary, imageState, format, symbolContext)).join(''); }
-    const {tag} = content;
-    if ((tag === 'div' || tag === 'li') && content.data?.content === 'forms' && /^Jitendex(?:\.org)?(?:$|[ [])/i.test(dictionary)) { symbolContext = 'forms'; }
-    if (tag === 'img') { return escapeText(getImageText(content, dictionary, imageState), format); }
-    if (tag === 'br') { return '\n'; }
-    if (tag === 'rp') { return ''; }
-    if (tag === 'table') { return getTableText(content.content, dictionary, imageState, format, symbolContext === 'forms'); }
-    if (tag === 'ol' || tag === 'ul') {
-        const items = Array.isArray(content.content) ? content.content : [content.content];
-        const separator = format === 'markdown' ? '\n\n' : '\n';
-        let index = 0;
-        return `${separator}${items.map((item) => {
-            if (typeof item !== 'object' || item === null || Array.isArray(item) || item.tag !== 'li') { return getStructuredContentText(item, dictionary, imageState, format, symbolContext); }
-            const marker = tag === 'ol' ? `${++index}. ` : '- ';
-            const itemContext = item.data?.content === 'forms' && /^Jitendex(?:\.org)?(?:$|[ [])/i.test(dictionary) ? 'forms' : symbolContext;
-            const text = getStructuredContentText(item.content, dictionary, imageState, format, itemContext).trim();
-            return marker + text.replace(format === 'markdown' ? /\n/g : /\n+/g, `\n${' '.repeat(marker.length)}`);
-        }).join('\n')}${separator}`;
+    if (Array.isArray(content)) {
+        let text = '';
+        /** @type {import('settings').CopyContentRule|undefined} */
+        let previous;
+        for (const item of content) {
+            const rule = typeof item === 'object' && !Array.isArray(item) ? findCopyContentRule(item, ancestors, dictionary, imageState.revisions.get(dictionary), imageState.contentRules) : void 0;
+            const output = getStructuredContentText(item, dictionary, imageState, format, ancestors, layout);
+            if (output.trim().length > 0 && rule && rule === previous && rule.action !== 'omit') { text += escapeText(rule.separator ?? '', format); }
+            text += output;
+            previous = output.trim().length > 0 && rule?.action !== 'omit' ? rule : void 0;
+        }
+        return text;
     }
-    const text = getStructuredContentText(content.content, dictionary, imageState, format, symbolContext);
-    if (tag === 'span' && symbolContext === 'symbol' && text.trim().length === 0 && typeof content.title === 'string') { return escapeText(content.title.trim(), format); }
+    const {tag} = content;
+    const rule = findCopyContentRule(content, ancestors, dictionary, imageState.revisions.get(dictionary), imageState.contentRules);
+    if (rule?.action === 'omit') { return ''; }
+    const children = [content, ...ancestors];
+    let text;
+    if (rule?.action === 'replace') {
+        text = escapeText(rule.text, format);
+    } else if (rule?.action === 'title') {
+        text = escapeText('title' in content ? content.title ?? '' : '', format);
+    } else {
+        switch (tag) {
+            case 'img': text = escapeText(getImageText(content, dictionary, imageState), format); break;
+            case 'br': text = '\n'; break;
+            case 'rp': text = ''; break;
+            case 'table':
+                text = layout === 'table-fallback' ? getStructuredContentText(content.content, dictionary, imageState, format, children, layout) : getTableText(content.content, dictionary, imageState, format, children);
+                break;
+            case 'tr':
+            case 'thead':
+            case 'tbody':
+            case 'tfoot':
+                text = layout === 'table-fallback' ? getTableText(content, dictionary, imageState, format, ancestors, content) : getStructuredContentText(content.content, dictionary, imageState, format, children);
+                break;
+            case 'ol':
+            case 'ul': {
+                const items = Array.isArray(content.content) ? content.content : [content.content];
+                const separator = format === 'markdown' ? '\n\n' : '\n';
+                let index = 0;
+                /** @type {import('settings').CopyContentRule|undefined} */
+                let previous;
+                /** @type {string[]} */
+                const outputs = [];
+                for (const item of items) {
+                    const itemRule = typeof item === 'object' && !Array.isArray(item) ? findCopyContentRule(item, children, dictionary, imageState.revisions.get(dictionary), imageState.contentRules) : void 0;
+                    const isListItem = typeof item === 'object' && !Array.isArray(item) && item.tag === 'li';
+                    const output = getStructuredContentText(item, dictionary, imageState, format, children, isListItem ? 'list-item' : 'normal').trim();
+                    if (output.length > 0 && itemRule && itemRule === previous && itemRule.action !== 'omit') { outputs[outputs.length - 1] += escapeText(itemRule.separator ?? '', format); }
+                    previous = output.length > 0 && itemRule?.action !== 'omit' ? itemRule : void 0;
+                    if (output.length === 0) { continue; }
+                    const marker = isListItem ? (tag === 'ol' ? `${++index}. ` : '- ') : '';
+                    outputs.push(marker + output.replace(format === 'markdown' ? /\n/g : /\n+/g, `\n${' '.repeat(marker.length)}`));
+                }
+                text = `${separator}${outputs.join('\n')}${separator}`;
+                break;
+            }
+            default: text = getStructuredContentText(content.content, dictionary, imageState, format, children, layout === 'table-fallback' ? layout : 'normal'); break;
+        }
+    }
+    if (rule) { text = escapeText(rule.prefix ?? '', format) + text + escapeText(rule.suffix ?? '', format); }
+    if (layout === 'list-item' || layout === 'table-cell') { return text; }
+    if (tag === 'table' && layout !== 'table-fallback') { return text; }
+    if (tag === 'ol' || tag === 'ul') { return text; }
     switch (tag) {
         case 'rt': return `(${text})`;
         case 'td':
@@ -214,19 +266,29 @@ function hasTable(content) {
  * @param {string} dictionary
  * @param {ImageState} imageState
  * @param {'markdown'|'text'} format
- * @param {boolean} forms
+ * @param {import('structured-content').Element[]} ancestors
+ * @param {import('structured-content').Element} [convertedGroup]
  * @returns {string}
  */
-function getTableText(content, dictionary, imageState, format, forms) {
+function getTableText(content, dictionary, imageState, format, ancestors, convertedGroup) {
     /** @type {import('structured-content').TableElement[][]} */
     const rows = [];
-    /** @param {import('structured-content').Content|undefined} item */
-    const collect = (item) => {
+    /** @type {Map<import('structured-content').TableElement, import('structured-content').Element[]>} */
+    const cellAncestors = new Map();
+    let mappedGroup = false;
+    /**
+     * @param {import('structured-content').Content|undefined} item
+     * @param {import('structured-content').Element[]} parents
+     */
+    const collect = (item, parents) => {
         if (Array.isArray(item)) {
-            for (const child of item) { collect(child); }
+            for (const child of item) { collect(child, parents); }
             return;
         }
         if (typeof item !== 'object') { return; }
+        const rule = item === convertedGroup ? void 0 : findCopyContentRule(item, parents, dictionary, imageState.revisions.get(dictionary), imageState.contentRules);
+        if (rule?.action === 'omit') { return; }
+        if (rule && (rule.action !== 'content' || rule.prefix || rule.suffix || rule.separator)) { mappedGroup = true; }
         if (item.tag === 'tr') {
             /** @type {import('structured-content').TableElement[]} */
             const cells = [];
@@ -234,21 +296,45 @@ function getTableText(content, dictionary, imageState, format, forms) {
             const collectCells = (child) => {
                 if (Array.isArray(child)) {
                     for (const value of child) { collectCells(value); }
-                } else if (typeof child === 'object' && (child.tag === 'td' || child.tag === 'th')) { cells.push(child); }
+                } else if (typeof child === 'object' && (child.tag === 'td' || child.tag === 'th')) {
+                    cells.push(child);
+                    cellAncestors.set(child, [item, ...parents]);
+                }
             };
             collectCells(item.content);
             rows.push(cells);
-        } else if (item.tag === 'thead' || item.tag === 'tbody' || item.tag === 'tfoot') { collect(item.content); }
+        } else if (item.tag === 'thead' || item.tag === 'tbody' || item.tag === 'tfoot') { collect(item.content, [item, ...parents]); }
     };
-    collect(content);
+    collect(content, ancestors);
+    // Convert mapped groups independently so their operations retain the remaining table structure.
+    if (mappedGroup) {
+        return getStructuredContentText(convertedGroup ? convertedGroup.content : content, dictionary, imageState, format, convertedGroup ? [convertedGroup, ...ancestors] : ancestors, 'table-fallback');
+    }
     const nested = rows.some((row) => row.some((cell) => hasTable(cell.content)));
     const cellFormat = nested ? 'text' : format;
-    // shortcut: six verified Jitendex form classes only, verify source metadata before adding classes or contexts.
-    const context = (/** @type {import('structured-content').TableElement} */ cell) => (forms && /^form-(?:pri|valid|irr|rare|out|old)$/.test(cell.data?.class ?? '') ? 'symbol' : '');
-    const texts = rows.map((row) => row.map((cell) => {
-        const text = getStructuredContentText(cell.content, dictionary, imageState, cellFormat, context(cell));
-        return nested ? text.replace(/^[ \n]+|[ \n]+$/g, '') : text.trim().replace(/\s*\n\s*/g, '; ').replace(/\t/g, ' ');
-    }));
+    /**
+     * @param {ImageState} state
+     * @param {'markdown'|'text'} outputFormat
+     * @param {boolean} preserveLines
+     * @returns {string[][]}
+     */
+    const getCellTexts = (state, outputFormat, preserveLines) => rows.map((row) => {
+        /** @type {string[]} */
+        const outputs = [];
+        /** @type {import('settings').CopyContentRule|undefined} */
+        let previous;
+        for (const cell of row) {
+            const parents = cellAncestors.get(cell) ?? ancestors;
+            const rule = findCopyContentRule(cell, parents, dictionary, state.revisions.get(dictionary), state.contentRules);
+            const text = getStructuredContentText(cell, dictionary, state, outputFormat, parents, 'table-cell');
+            const output = preserveLines ? text.replace(/^[ \n]+|[ \n]+$/g, '') : text.trim().replace(/\s*\n\s*/g, '; ').replace(/\t/g, ' ');
+            if (output.trim().length > 0 && rule && rule === previous && rule.action !== 'omit') { outputs[outputs.length - 1] += escapeText(rule.separator ?? '', outputFormat); }
+            outputs.push(output);
+            previous = output.trim().length > 0 && rule?.action !== 'omit' ? rule : void 0;
+        }
+        return outputs;
+    });
+    const texts = getCellTexts(imageState, cellFormat, nested);
     if (!texts.some((row) => row.some((text) => text.trim().length > 0))) { return ''; }
     /** @type {string[][]} */
     let grid = [];
@@ -284,7 +370,7 @@ function getTableText(content, dictionary, imageState, format, forms) {
     oversized ||= width * rows.length > 10000;
     if (oversized) {
         const contextState = {...imageState, images: [], unresolvedImages: 0};
-        grid = rows.map((row) => row.map((cell) => getStructuredContentText(cell.content, dictionary, contextState, 'text', context(cell)).trim()));
+        grid = getCellTexts(contextState, 'text', true);
     } else {
         for (const row of grid) {
             for (let i = 0; i < width; ++i) { row[i] ??= ''; }
@@ -342,5 +428,5 @@ function getImageText(image, dictionary, imageState) {
 
 /**
  * @typedef {{dictionary: string, revision: string, path: string, handling: 'user-replacement'|'user-omission'|'metadata'|'illustration'|'unresolved', text: string, context: string}} CopyImageOutcome
- * @typedef {{unresolvedImages: number, images: CopyImageOutcome[], rules: Map<string, import('settings').CopyImageRule>, revisions: Map<string, string>}} ImageState
+ * @typedef {{unresolvedImages: number, images: CopyImageOutcome[], rules: Map<string, import('settings').CopyImageRule>, revisions: Map<string, string>, contentRules: import('settings').CopyContentRule[]}} ImageState
  */
