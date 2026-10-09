@@ -246,7 +246,8 @@ h1 {
 
 
 /* Image copy rules */
-#copy-image-inspector {
+#copy-image-inspector,
+#copy-content-inspector {
     color: var(--text-color);
     background: var(--background-color);
     width: min(48em, 90vw);
@@ -254,7 +255,8 @@ h1 {
     overflow: auto;
     border: 1px solid var(--separator-color1);
 }
-#copy-image-inspector::backdrop {
+#copy-image-inspector::backdrop,
+#copy-content-inspector::backdrop {
     background: rgba(0, 0, 0, 0.5);
 }
 .copy-image-card {
@@ -275,19 +277,24 @@ h1 {
     object-fit: contain;
     background: #fff;
 }
-.copy-image-card label {
+.copy-image-card label,
+#copy-content-fields label {
     display: block;
     margin-bottom: 0.5em;
 }
-.copy-image-text {
+.copy-image-text,
+#copy-content-fields textarea {
     display: block;
     box-sizing: border-box;
     width: 100%;
 }
 .copy-image-context,
-.copy-image-inactive {
+.copy-image-inactive,
+#copy-content-context,
+#copy-content-preview {
     white-space: pre-wrap;
 }
-#copy-image-inspector-status {
+#copy-image-inspector-status,
+#copy-content-inspector-status {
     margin: 1em 0;
 }
