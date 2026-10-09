@@ -122,9 +122,9 @@ export class CopyContentInspector {
         querySelectorNotNull(this._dialog, '#copy-content-inactive').textContent = rules.filter((value) => value.dictionary === dictionary && value.revision !== revision).map((value) => `Inactive revision: ${value.id} (${value.revision})`).join('\n');
         this._match.value = JSON.stringify(rule?.match ?? {
             tag: node.tag,
-            ...(node.data ? {data: node.data} : {}),
+            ...(node.data && Object.keys(node.data).length > 0 ? {data: node.data} : {}),
             ...('title' in node && typeof node.title === 'string' ? {title: node.title} : {}),
-            ...(ancestors.length > 0 ? {ancestors: ancestors.map((ancestor) => ({tag: ancestor.tag, ...(ancestor.data ? {data: ancestor.data} : {})}))} : {}),
+            ...(ancestors.length > 0 ? {ancestors: ancestors.map((ancestor) => ({tag: ancestor.tag, ...(ancestor.data && Object.keys(ancestor.data).length > 0 ? {data: ancestor.data} : {})}))} : {}),
         }, null, 2);
         this._action.value = rule?.action ?? 'content';
         this._text.value = rule?.action === 'replace' ? rule.text : '';
@@ -176,11 +176,7 @@ export class CopyContentInspector {
             } else {
                 rules.push(rule);
             }
-            const {text, unresolvedImages} = this._controller.getCopyEntryText(this._entry, void 0, rules);
-            querySelectorNotNull(this._dialog, '#copy-content-preview').textContent = text;
-            this._draft = rules;
-            this._saveButton.disabled = false;
-            status.textContent = `Draft preview. ${unresolvedImages} unresolved image(s). Save to apply.`;
+            this._previewRules(rules);
         } catch (error) {
             status.textContent = `Could not preview rule: ${error instanceof Error ? error.message : 'Please try again.'}`;
         }
@@ -200,7 +196,23 @@ export class CopyContentInspector {
             if (target < 0 || target >= rules.length) { return; }
             [rules[index], rules[target]] = [rules[target], rules[index]];
         }
-        void this._save(rules);
+        this._previewRules(rules);
+    }
+
+    /** @param {import('settings').CopyContentRule[]} rules */
+    _previewRules(rules) {
+        if (this._entry === null) { return; }
+        this._invalidatePreview();
+        const status = querySelectorNotNull(this._dialog, '#copy-content-inspector-status');
+        try {
+            const {text, unresolvedImages} = this._controller.getCopyEntryText(this._entry, void 0, rules);
+            querySelectorNotNull(this._dialog, '#copy-content-preview').textContent = text;
+            this._draft = rules;
+            this._saveButton.disabled = false;
+            status.textContent = `Draft preview. ${unresolvedImages} unresolved image(s). Save to apply.`;
+        } catch (error) {
+            status.textContent = `Could not preview rule: ${error instanceof Error ? error.message : 'Please try again.'}`;
+        }
     }
 
     /** @param {import('settings').CopyContentRule[]} rules */
