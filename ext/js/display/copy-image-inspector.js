@@ -71,7 +71,7 @@ export class CopyImageInspector {
         list.textContent = '';
         /** @type {Map<string, import('./result-entry-text.js').CopyImageOutcome>} */
         const images = new Map();
-        for (const image of this._controller.getCopyEntryText(this._entry).images) {
+        for (const image of this._controller.getCopyEntryText(this._entry, 'text').images) {
             const key = JSON.stringify([image.dictionary, image.revision, image.path]);
             if (images.get(key)?.handling !== 'unresolved') { images.set(key, image); }
         }

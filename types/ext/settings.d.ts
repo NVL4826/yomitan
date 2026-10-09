@@ -163,6 +163,7 @@ export type GeneralOptions = {
     sortFrequencyDictionaryOrder: SortFrequencyDictionaryOrder;
     stickySearchHeader: boolean;
     copyExcludedDictionaries: string[];
+    copyFormat: 'markdown' | 'text';
     enableYomitanApi: boolean;
     yomitanApiAllowCssSanitizationBypass: boolean;
 };

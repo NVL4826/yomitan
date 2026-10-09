@@ -315,6 +315,7 @@ function createProfileOptionsUpdatedTestData1() {
             sortFrequencyDictionaryOrder: 'descending',
             stickySearchHeader: false,
             copyExcludedDictionaries: [],
+            copyFormat: 'markdown',
             enableYomitanApi: false,
             yomitanApiServer: 'http://127.0.0.1:19633',
             yomitanApiAllowCssSanitizationBypass: false,
@@ -708,7 +709,7 @@ function createOptionsUpdatedTestData1() {
             },
         ],
         profileCurrent: 0,
-        version: 79,
+        version: 80,
         global: {
             database: {
                 prefixWildcardsSupported: false,
