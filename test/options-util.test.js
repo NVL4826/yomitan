@@ -20,6 +20,7 @@ import fs from 'fs';
 import {fileURLToPath} from 'node:url';
 import path from 'path';
 import {describe, expect, test, vi} from 'vitest';
+import {parseJson} from '../ext/js/core/json.js';
 import {OptionsUtil} from '../ext/js/data/options-util.js';
 import {TemplatePatcher} from '../ext/js/templates/template-patcher.js';
 import {chrome, fetch} from './mocks/common.js';
@@ -316,6 +317,7 @@ function createProfileOptionsUpdatedTestData1() {
             stickySearchHeader: false,
             copyExcludedDictionaries: [],
             copyFormat: 'markdown',
+            copyReduceHeadwordRepetition: false,
             enableYomitanApi: false,
             yomitanApiServer: 'http://127.0.0.1:19633',
             yomitanApiAllowCssSanitizationBypass: false,
@@ -709,12 +711,13 @@ function createOptionsUpdatedTestData1() {
             },
         ],
         profileCurrent: 0,
-        version: 80,
+        version: 81,
         global: {
             database: {
                 prefixWildcardsSupported: false,
             },
             dataTransmissionConsentShown: false,
+            copyContentRules: /** @type {import('settings').CopyContentRuleDocument} */ (parseJson(fs.readFileSync(path.join(dirname, '../ext/data/copy-content-rules.json'), 'utf8'))).rules,
             copyImageRules: [
                 {dictionary: '新明解国語辞典　第八版', revision: 'smk8;2023-07-09', path: 'smk8/かぞえ方-default.svg', action: 'replace', text: 'かぞえ方'},
                 {dictionary: '新明解国語辞典　第八版', revision: 'smk8;2023-07-09', path: 'smk8/一-fill.svg', action: 'replace', text: '一'},
@@ -2148,4 +2151,21 @@ test('Image rules seed once for installations and old settings, and preserve int
     const replacement = [{dictionary: 'New dictionary', revision: 'v1', path: 'label.svg', action: 'replace', text: 'Label'}];
     const imported = await util.update({...legacy, global: {...legacy.global, copyImageRules: replacement}});
     expect(imported.global.copyImageRules).toEqual(replacement);
+});
+
+
+test('Content rules seed once at version 81 and preserve deleted collections on reload', async () => {
+    const util = new OptionsUtil();
+    await util.prepare();
+    const defaults = util.getDefault();
+    expect(defaults.global.copyContentRules).toHaveLength(7);
+    expect(defaults.profiles[0].options.general.copyReduceHeadwordRepetition).toBe(false);
+    const legacy = structuredClone(defaults);
+    legacy.version = 80;
+    delete /** @type {Partial<import('settings').GlobalOptions>} */ (legacy.global).copyContentRules;
+    const migrated = await util.update(legacy);
+    expect(migrated.global.copyContentRules).toEqual(defaults.global.copyContentRules);
+    migrated.global.copyContentRules = [];
+    expect((await util.update(migrated)).global.copyContentRules).toEqual([]);
+    expect(util.getDefault().global.copyContentRules).toHaveLength(7);
 });

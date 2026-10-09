@@ -54,6 +54,7 @@
                                     <option value="markdown">Markdown</option>
                                     <option value="text">Plain text</option>
                                 </select>
+                                <label><input type="checkbox" id="copy-reduce-headword-repetition"> Reduce repeated headword lines</label>
                                 <fieldset>
                                     <legend>Include dictionaries in copied text</legend>
                                     <div id="copy-dictionaries"></div>
@@ -63,6 +64,13 @@
                                     <button type="button" id="copy-image-rules-import">Import JSON</button>
                                     <button type="button" id="copy-image-rules-export">Export JSON</button>
                                     <input type="file" id="copy-image-rules-file" accept=".json,application/json" hidden>
+                                </fieldset>
+                                <fieldset>
+                                    <legend>Content copy rules</legend>
+                                    <p>Rules use exact dictionary revisions. Export includes inactive and uninstalled dictionaries.</p>
+                                    <button type="button" id="copy-content-rules-import">Import JSON</button>
+                                    <button type="button" id="copy-content-rules-export">Export JSON</button>
+                                    <input type="file" id="copy-content-rules-file" accept=".json,application/json" hidden>
                                 </fieldset>
                                 <div id="copy-options-status" role="status" aria-live="polite"></div>
                             </details>
@@ -119,6 +127,33 @@
     <div id="copy-image-inspector-list"></div>
     <div id="copy-image-inspector-status" role="status" aria-live="polite"></div>
     <button type="button" id="copy-image-inspector-close">Close</button>
+</dialog>
+<dialog id="copy-content-inspector" aria-labelledby="copy-content-inspector-title" class="scan-disable">
+    <h2 id="copy-content-inspector-title">Content copy rules</h2>
+    <p>Select an original element or group. The first matching rule wins; group replacements affect all its children.</p>
+    <label for="copy-content-candidate">Included content</label>
+    <select id="copy-content-candidate"></select>
+    <pre id="copy-content-context"></pre>
+    <p id="copy-content-active-rule"></p>
+    <p id="copy-content-inactive"></p>
+    <fieldset id="copy-content-fields">
+        <legend>Edit copy rule</legend>
+        <label>Matcher JSON <textarea id="copy-content-match" rows="8"></textarea></label>
+        <label>Action <select id="copy-content-action"><option value="content">Converted content</option><option value="title">Original title</option><option value="replace">Replace with text</option><option value="omit">Omit deliberately</option></select></label>
+        <label>Replacement text <textarea id="copy-content-text" rows="2"></textarea></label>
+        <label>Prefix <input type="text" id="copy-content-prefix"></label>
+        <label>Suffix <input type="text" id="copy-content-suffix"></label>
+        <label>Sibling label separator <input type="text" id="copy-content-separator"></label>
+        <button type="button" id="copy-content-preview-button">Preview complete result</button>
+        <button type="button" id="copy-content-save" disabled>Save rule</button>
+        <button type="button" id="copy-content-delete">Delete rule</button>
+        <button type="button" id="copy-content-earlier">Move earlier</button>
+        <button type="button" id="copy-content-later">Move later</button>
+    </fieldset>
+    <h3>Complete result preview</h3>
+    <pre id="copy-content-preview"></pre>
+    <div id="copy-content-inspector-status" role="status" aria-live="polite"></div>
+    <button type="button" id="copy-content-inspector-close">Close</button>
 </dialog>
 <template id="copy-image-card-template">
     <section class="copy-image-card">

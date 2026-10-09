@@ -33,6 +33,11 @@
         {"path": "dev/data/chrome-manifest-schema.json", "ignore": true},
 
         {
+            "path": "ext/data/copy-content-rules.json",
+            "typeFile": "types/ext/settings.d.ts",
+            "type": "CopyContentRuleDocument"
+        },
+        {
             "path": "ext/data/copy-image-rules.json",
             "typeFile": "types/ext/settings.d.ts",
             "type": "CopyImageRuleDocument"

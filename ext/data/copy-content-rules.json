@@ -1,0 +1,175 @@
+{
+    "version": 1,
+    "rules": [
+        {
+            "id": "jitendex-form-pri",
+            "dictionary": "Jitendex.org [2026-10-03]",
+            "revision": "2026.10.03.0",
+            "match": {
+                "tag": "span",
+                "empty": true,
+                "ancestors": [
+                    {
+                        "tag": "td",
+                        "data": {
+                            "class": "form-pri"
+                        }
+                    },
+                    {
+                        "tag": "table"
+                    },
+                    {
+                        "data": {
+                            "content": "forms"
+                        }
+                    }
+                ]
+            },
+            "action": "title"
+        },
+        {
+            "id": "jitendex-form-valid",
+            "dictionary": "Jitendex.org [2026-10-03]",
+            "revision": "2026.10.03.0",
+            "match": {
+                "tag": "span",
+                "empty": true,
+                "ancestors": [
+                    {
+                        "tag": "td",
+                        "data": {
+                            "class": "form-valid"
+                        }
+                    },
+                    {
+                        "tag": "table"
+                    },
+                    {
+                        "data": {
+                            "content": "forms"
+                        }
+                    }
+                ]
+            },
+            "action": "title"
+        },
+        {
+            "id": "jitendex-form-irr",
+            "dictionary": "Jitendex.org [2026-10-03]",
+            "revision": "2026.10.03.0",
+            "match": {
+                "tag": "span",
+                "empty": true,
+                "ancestors": [
+                    {
+                        "tag": "td",
+                        "data": {
+                            "class": "form-irr"
+                        }
+                    },
+                    {
+                        "tag": "table"
+                    },
+                    {
+                        "data": {
+                            "content": "forms"
+                        }
+                    }
+                ]
+            },
+            "action": "title"
+        },
+        {
+            "id": "jitendex-form-rare",
+            "dictionary": "Jitendex.org [2026-10-03]",
+            "revision": "2026.10.03.0",
+            "match": {
+                "tag": "span",
+                "empty": true,
+                "ancestors": [
+                    {
+                        "tag": "td",
+                        "data": {
+                            "class": "form-rare"
+                        }
+                    },
+                    {
+                        "tag": "table"
+                    },
+                    {
+                        "data": {
+                            "content": "forms"
+                        }
+                    }
+                ]
+            },
+            "action": "title"
+        },
+        {
+            "id": "jitendex-form-out",
+            "dictionary": "Jitendex.org [2026-10-03]",
+            "revision": "2026.10.03.0",
+            "match": {
+                "tag": "span",
+                "empty": true,
+                "ancestors": [
+                    {
+                        "tag": "td",
+                        "data": {
+                            "class": "form-out"
+                        }
+                    },
+                    {
+                        "tag": "table"
+                    },
+                    {
+                        "data": {
+                            "content": "forms"
+                        }
+                    }
+                ]
+            },
+            "action": "title"
+        },
+        {
+            "id": "jitendex-form-old",
+            "dictionary": "Jitendex.org [2026-10-03]",
+            "revision": "2026.10.03.0",
+            "match": {
+                "tag": "span",
+                "empty": true,
+                "ancestors": [
+                    {
+                        "tag": "td",
+                        "data": {
+                            "class": "form-old"
+                        }
+                    },
+                    {
+                        "tag": "table"
+                    },
+                    {
+                        "data": {
+                            "content": "forms"
+                        }
+                    }
+                ]
+            },
+            "action": "title"
+        },
+        {
+            "id": "jitendex-grammar-labels",
+            "dictionary": "Jitendex.org [2026-10-03]",
+            "revision": "2026.10.03.0",
+            "match": {
+                "tag": "span",
+                "data": {
+                    "class": "tag",
+                    "content": "part-of-speech-info"
+                }
+            },
+            "action": "content",
+            "separator": " · "
+        }
+    ]
+}
