@@ -33,7 +33,7 @@ Matching/conversion (#15) and inspector/controls (#16) are implemented and integ
 - Original Jitendex examples were checked for separated grammatical labels, intact ordered senses, recovered form-symbol titles, and inactive/deleted mappings. Both output formats preserve the original source and distinct headword variants.
 - Standards review: no actionable findings. Spec review: four findings corrected, with regression tests demonstrating failure before each fix. Corrections preserve merged-cell table positions, escape list markers assembled across fragments, stage reorder/delete previews before persistence, and omit empty metadata from suggested matchers.
 
-Browser clipboard/paste was not verified in a real browser: Chromium installation stalled during extraction. DOM tests exercise the public controls and clipboard stub. The PR remains unmerged pending user review.
+The user verified clipboard/paste in a real browser and confirmed it works on 2026-10-09. DOM tests also exercise the public controls and clipboard stub. The PR remains unmerged pending user review.
 
 ## Using the controls
 
