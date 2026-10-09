@@ -61,6 +61,28 @@ export type Options = {
     global: GlobalOptions;
 };
 
+export type CopyContentNodeMatch = {
+    tag?: string;
+    data?: Record<string, string>;
+    title?: string;
+    empty?: boolean;
+};
+
+export type CopyContentMatch = CopyContentNodeMatch & {ancestors?: CopyContentNodeMatch[]};
+
+export type CopyContentRule = {
+    id: string;
+    dictionary: string;
+    revision: string;
+    match: CopyContentMatch;
+} & ({action: 'omit'} | {
+    prefix?: string;
+    suffix?: string;
+    separator?: string;
+} & ({action: 'replace', text: string} | {action: 'content' | 'title'}));
+
+export type CopyContentRuleDocument = {version: 1, rules: CopyContentRule[]};
+
 export type CopyImageRule = {
     dictionary: string;
     revision: string;
