@@ -127,6 +127,8 @@
                                     "sortFrequencyDictionaryOrder",
                                     "stickySearchHeader",
                                     "copyExcludedDictionaries",
+                                    "copyFormat",
+                                    "copyReduceHeadwordRepetition",
                                     "fontFamily",
                                     "fontSize",
                                     "lineHeight",
@@ -346,6 +348,15 @@
                                     "stickySearchHeader": {
                                         "type": "boolean",
                                         "default": false
+                                    },
+                                    "copyReduceHeadwordRepetition": {
+                                        "type": "boolean",
+                                        "default": false
+                                    },
+                                    "copyFormat": {
+                                        "type": "string",
+                                        "enum": ["markdown", "text"],
+                                        "default": "markdown"
                                     },
                                     "copyExcludedDictionaries": {
                                         "type": "array",
@@ -1406,9 +1417,126 @@
             "required": [
                 "database",
                 "dataTransmissionConsentShown",
-                "copyImageRules"
+                "copyImageRules",
+                "copyContentRules"
             ],
             "properties": {
+                "copyContentRules": {
+                    "type": "array",
+                    "default": [],
+                    "items": {
+                        "type": "object",
+                        "required": [
+                            "id",
+                            "dictionary",
+                            "revision",
+                            "match",
+                            "action"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                            "id": {
+                                "type": "string",
+                                "minLength": 1
+                            },
+                            "dictionary": {
+                                "type": "string",
+                                "minLength": 1
+                            },
+                            "revision": {
+                                "type": "string",
+                                "minLength": 1
+                            },
+                            "match": {
+                                "$ref": "#/definitions/copyContentMatch"
+                            },
+                            "action": {
+                                "type": "string",
+                                "enum": [
+                                    "content",
+                                    "title",
+                                    "replace",
+                                    "omit"
+                                ]
+                            },
+                            "prefix": {
+                                "type": "string"
+                            },
+                            "suffix": {
+                                "type": "string"
+                            },
+                            "separator": {
+                                "type": "string"
+                            },
+                            "text": {
+                                "type": "string",
+                                "minLength": 1
+                            }
+                        },
+                        "oneOf": [
+                            {
+                                "properties": {
+                                    "action": {
+                                        "enum": [
+                                            "replace"
+                                        ]
+                                    }
+                                },
+                                "required": [
+                                    "text"
+                                ]
+                            },
+                            {
+                                "properties": {
+                                    "action": {
+                                        "enum": [
+                                            "content",
+                                            "title"
+                                        ]
+                                    }
+                                },
+                                "not": {
+                                    "required": [
+                                        "text"
+                                    ]
+                                }
+                            },
+                            {
+                                "properties": {
+                                    "action": {
+                                        "enum": [
+                                            "omit"
+                                        ]
+                                    }
+                                },
+                                "not": {
+                                    "anyOf": [
+                                        {
+                                            "required": [
+                                                "text"
+                                            ]
+                                        },
+                                        {
+                                            "required": [
+                                                "prefix"
+                                            ]
+                                        },
+                                        {
+                                            "required": [
+                                                "suffix"
+                                            ]
+                                        },
+                                        {
+                                            "required": [
+                                                "separator"
+                                            ]
+                                        }
+                                    ]
+                                }
+                            }
+                        ]
+                    }
+                },
                 "copyImageRules": {
                     "type": "array",
                     "default": [],
@@ -1499,6 +1627,107 @@
                     "default": false
                 }
             }
+        }
+    },
+    "definitions": {
+        "copyContentNodeMatch": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "tag": {
+                    "type": "string",
+                    "minLength": 1
+                },
+                "data": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "title": {
+                    "type": "string"
+                },
+                "empty": {
+                    "type": "boolean"
+                }
+            },
+            "anyOf": [
+                {
+                    "required": [
+                        "tag"
+                    ]
+                },
+                {
+                    "required": [
+                        "data"
+                    ]
+                },
+                {
+                    "required": [
+                        "title"
+                    ]
+                },
+                {
+                    "required": [
+                        "empty"
+                    ]
+                }
+            ]
+        },
+        "copyContentMatch": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "tag": {
+                    "type": "string",
+                    "minLength": 1
+                },
+                "data": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "title": {
+                    "type": "string"
+                },
+                "empty": {
+                    "type": "boolean"
+                },
+                "ancestors": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/copyContentNodeMatch"
+                    }
+                }
+            },
+            "anyOf": [
+                {
+                    "required": [
+                        "tag"
+                    ]
+                },
+                {
+                    "required": [
+                        "data"
+                    ]
+                },
+                {
+                    "required": [
+                        "title"
+                    ]
+                },
+                {
+                    "required": [
+                        "empty"
+                    ]
+                },
+                {
+                    "required": [
+                        "ancestors"
+                    ]
+                }
+            ]
         }
     }
 }

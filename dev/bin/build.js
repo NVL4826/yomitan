@@ -22,11 +22,13 @@ import fs from 'fs';
 import JSZip from 'jszip';
 import {fileURLToPath} from 'node:url';
 import path from 'path';
+import os from 'node:os';
 import readline from 'readline';
 import {parseArgs} from 'util';
 import {buildLibs} from '../build-libs.js';
 import {ManifestUtil} from '../manifest-util.js';
 import {getAllFiles} from '../util.js';
+import {adaptFirefoxOffscreen} from '../build-source-adaptations.js';
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -37,15 +39,16 @@ const dirname = path.dirname(fileURLToPath(import.meta.url));
  * @param {string[]} sevenZipExes
  * @param {?import('jszip').OnUpdateCallback} onUpdate
  * @param {boolean} dryRun
+ * @param {boolean} isFirefox
  */
-async function createZip(directory, excludeFiles, outputFileName, sevenZipExes, onUpdate, dryRun) {
-    try {
-        fs.unlinkSync(outputFileName);
-    } catch (e) {
-        // NOP
-    }
-
+async function createZip(directory, excludeFiles, outputFileName, sevenZipExes, onUpdate, dryRun, isFirefox) {
     if (!dryRun) {
+        try {
+            fs.unlinkSync(outputFileName);
+        } catch (e) {
+            // NOP
+        }
+
         for (const exe of sevenZipExes) {
             try {
                 const excludeArguments = excludeFiles.map((excludeFilePath) => `-x!${excludeFilePath}`);
@@ -67,7 +70,7 @@ async function createZip(directory, excludeFiles, outputFileName, sevenZipExes, 
             }
         }
     }
-    await createJSZip(directory, excludeFiles, outputFileName, onUpdate, dryRun);
+    await createJSZip(directory, excludeFiles, outputFileName, onUpdate, dryRun, isFirefox);
 }
 
 /**
@@ -76,15 +79,21 @@ async function createZip(directory, excludeFiles, outputFileName, sevenZipExes, 
  * @param {string} outputFileName
  * @param {?import('jszip').OnUpdateCallback} onUpdate
  * @param {boolean} dryRun
+ * @param {boolean} isFirefox
  */
-async function createJSZip(directory, excludeFiles, outputFileName, onUpdate, dryRun) {
+async function createJSZip(directory, excludeFiles, outputFileName, onUpdate, dryRun, isFirefox) {
     const files = getAllFiles(directory);
     removeItemsFromArray(files, excludeFiles);
     const zip = new JSZip();
     for (const fileName of files) {
+        const zipPath = fileName.replace(/\\/g, '/');
+        let contents = fs.readFileSync(path.join(directory, fileName), {encoding: null, flag: 'r'});
+        if (dryRun && isFirefox && zipPath === 'js/background/offscreen-proxy.js') {
+            contents = Buffer.from(adaptFirefoxOffscreen(contents.toString('utf8')));
+        }
         zip.file(
-            fileName.replace(/\\/g, '/'),
-            fs.readFileSync(path.join(directory, fileName), {encoding: null, flag: 'r'}),
+            zipPath,
+            contents,
             {},
         );
     }
@@ -191,20 +200,40 @@ async function build(buildDir, extDir, manifestUtil, variantNames, manifestPath,
                 fs.writeFileSync(manifestPath, ManifestUtil.createManifestString(modifiedManifest).replace('$YOMITAN_VERSION', yomitanVersion));
             }
 
-            if (fileName.endsWith('.zip')) {
-                if (!dryRun || dryRunBuildZip) {
-                    await createZip(extDir, excludeFiles, fullFileName, sevenZipExes, onUpdate, dryRun);
-                }
-
-                if (!dryRun && Array.isArray(fileCopies)) {
-                    for (const fileName2 of fileCopies) {
-                        const fileName2Safe = path.basename(fileName2);
-                        fs.copyFileSync(fullFileName, path.join(buildDir, fileName2Safe));
+            // Stage Firefox independently so Chromium's source remains intact.
+            const isFirefox = Boolean(modifiedManifest.browser_specific_settings?.gecko);
+            const stagingDir = isFirefox && !dryRun ? fs.mkdtempSync(path.join(os.tmpdir(), 'yomitan-firefox-')) : null;
+            const packageDir = stagingDir ?? extDir;
+            try {
+                if (stagingDir !== null) {
+                    fs.cpSync(extDir, stagingDir, {recursive: true});
+                    const proxyPath = path.join(stagingDir, 'js/background/offscreen-proxy.js');
+                    fs.writeFileSync(proxyPath, adaptFirefoxOffscreen(fs.readFileSync(proxyPath, 'utf8')));
+                    for (const file of excludeFiles) {
+                        fs.rmSync(path.join(stagingDir, file), {recursive: true, force: true});
                     }
                 }
-            } else {
-                if (!dryRun) {
-                    fs.cpSync(extDir, fullFileName, {recursive: true});
+
+                if (fileName.endsWith('.zip')) {
+                    if (!dryRun || dryRunBuildZip) {
+                        await createZip(packageDir, excludeFiles, fullFileName, sevenZipExes, onUpdate, dryRun, isFirefox);
+                    }
+
+                    if (!dryRun && Array.isArray(fileCopies)) {
+                        for (const fileName2 of fileCopies) {
+                            const fileName2Safe = path.basename(fileName2);
+                            fs.copyFileSync(fullFileName, path.join(buildDir, fileName2Safe));
+                        }
+                    }
+                } else {
+                    if (!dryRun) {
+                        fs.rmSync(fullFileName, {recursive: true, force: true});
+                        fs.cpSync(packageDir, fullFileName, {recursive: true});
+                    }
+                }
+            } finally {
+                if (stagingDir !== null) {
+                    fs.rmSync(stagingDir, {recursive: true, force: true});
                 }
             }
         }

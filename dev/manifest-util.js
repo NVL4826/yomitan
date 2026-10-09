@@ -143,7 +143,7 @@ export class ManifestUtil {
                                 value = this._evaluateModificationCommand(command);
                             }
 
-                            this._setObjectKeyAtIndex(object, key, value, index);
+                            this._setObjectKeyAtIndex(object, key, structuredClone(value), index);
                         }
                         break;
                     case 'replace':

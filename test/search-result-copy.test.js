@@ -117,6 +117,7 @@ async function setupSearch(monitor = false, pageType = 'search', savedOptions) {
     vi.spyOn(api, 'getEnvironmentInfo').mockResolvedValue({browser: 'firefox', platform: {os: 'linux'}});
     vi.spyOn(api, 'getLanguageSummaries').mockResolvedValue([]);
     vi.spyOn(api, 'getDictionaryInfo').mockResolvedValue([
+        {title: 'Jitendex.org [2026-10-03]', revision: '2026.10.03.0', sequenced: true, version: 3, importDate: 0, prefixWildcardsSupported: false, styles: ''},
         {title: 'Dictionary A', revision: '2026-01', sequenced: true, version: 3, importDate: 0, prefixWildcardsSupported: false, styles: ''},
         {title: '新明解国語辞典　第八版', revision: 'smk8;2023-07-09', sequenced: true, version: 3, importDate: 0, prefixWildcardsSupported: false, styles: ''},
     ]);
@@ -455,14 +456,14 @@ test('Copy includes all variants, dictionary text, tags, frequencies, and struct
         return true;
     });
     /** @type {HTMLButtonElement} */ (querySelectorNotNull(document, 'button[data-action="copy-entry"]')).click();
-    expect(copiedText).toContain('言葉 (ことば)\n詞 (コトバ)');
+    expect(copiedText).toContain('# 言葉 (ことば)\n# 詞 (コトバ)');
     expect(copiedText).toContain('noun: a noun');
     expect(copiedText).toContain('word\nA second meaning');
     expect(copiedText).toContain('Dictionary B');
     expect(copiedText).toContain('Usage\n');
     expect(copiedText).toContain('Example: 言葉(ことば)を使う');
-    expect(copiedText).toContain('A note\nAnother line');
-    expect(copiedText).toContain('formal\tinformal');
+    expect(copiedText).toContain('2. A note\n   Another line');
+    expect(copiedText).toContain('| formal | informal |');
     expect(copiedText).toContain('Frequency Dictionary\nFrequency: 詞 (コトバ): 123 (common)');
     expect(copiedText).toContain('Pronunciation Dictionary\nPitch accent: 言葉 (ことば): downstep 0; nasal morae 2; devoiced morae 1');
     expect(copiedText).toContain('downstep 1,2');
@@ -656,9 +657,13 @@ function mockRulePersistence(api, optionsFull) {
     });
 }
 
-/** @param {unknown} value */
-async function importRules(value) {
-    const input = /** @type {HTMLInputElement} */ (querySelectorNotNull(document, '#copy-image-rules-file'));
+
+/**
+ * @param {unknown} value
+ * @param {'image' | 'content'} [kind]
+ */
+async function importRules(value, kind = 'image') {
+    const input = /** @type {HTMLInputElement} */ (querySelectorNotNull(document, `#copy-${kind}-rules-file`));
     Object.defineProperty(input, 'files', {configurable: true, value: [new File([typeof value === 'string' ? value : JSON.stringify(value)], 'rules.json', {type: 'application/json'})]});
     input.dispatchEvent(new Event('change'));
     await vi.waitFor(() => { expect(querySelectorNotNull(document, '#copy-options-status').textContent).not.toBe(''); });
@@ -687,7 +692,7 @@ test('Import replaces global rules and Copy uses exact revision rules before met
             {dictionary: 'Dictionary A', revision: '2026-01', path: 'photo.svg', action: 'omit'},
         ]});
     /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '[data-action="copy-entry"]')).click();
-    expect(clipboard.text).toContain('Before <plain text> after');
+    expect(clipboard.text).toContain('Before \\<plain text\\> after');
     expect(clipboard.text).not.toMatch(/Metadata|Caption/);
     expect(querySelectorNotNull(window.document, '.copy-entry-status').textContent).toBe('Copied.');
     expect(optionsFull.global).toHaveProperty('copyImageRules', [
@@ -1233,4 +1238,625 @@ test('Inspector excludes dictionary images before inspection and keeps separate 
     await render([createEntry('new result', ['word'])]);
     /** @type {HTMLButtonElement} */ (querySelectorNotNull(document, '[data-action="inspect-copy-images"]')).click();
     expect(querySelectorNotNull(document, '#copy-image-inspector-list').textContent).toContain('No unresolved images');
+});
+
+
+test('Copy defaults to Markdown headings and consecutive included dictionary numbers', async ({window}) => {
+    const {clipboard, render} = await setupSearch();
+    const entry = createEntry('言葉', ['word']);
+    entry.definitions.push({...entry.definitions[0], dictionary: 'Dictionary B', entries: ['second']});
+    await render([entry]);
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '[data-action="copy-entry"]')).click();
+    expect(clipboard.text).toBe('# 言葉 (ことば)\n\n## 1. Dictionary A\n言葉 (ことば)\nword\n\n## 2. Dictionary B\n言葉 (ことば)\nsecond');
+    /** @type {HTMLInputElement} */ (querySelectorNotNull(window.document, '#copy-dictionaries input[data-dictionary="Dictionary A"]')).click();
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '[data-action="copy-entry"]')).click();
+    expect(clipboard.text).toBe('# 言葉 (ことば)\n\n## 1. Dictionary B\n言葉 (ことば)\nsecond');
+});
+
+
+test('Copy escapes literal Markdown and preserves ordered and nested lists', async ({window}) => {
+    const {clipboard, render} = await setupSearch();
+    await render([createEntry('言葉', ['*literal* [link] # heading | pipe \\ backtick `', {type: 'structured-content',
+        content: {tag: 'ol',
+            content: [
+                {tag: 'li', content: ['first', {tag: 'ul', content: {tag: 'li', content: 'child'}}, 'after']},
+                {tag: 'li', content: ['second', {tag: 'br'}, 'continuation']},
+            ]}}])]);
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '[data-action="copy-entry"]')).click();
+    expect(clipboard.text).toContain(String.raw`\*literal\* \[link\] \# heading \| pipe \\ backtick \``);
+    expect(clipboard.text).toContain('1. first\n\n   - child\n\n   after\n2. second\n   continuation');
+});
+
+
+test('Copy preserves empty, merged, multiline and headerless table cells', async ({window}) => {
+    const {clipboard, render} = await setupSearch();
+    await render([createEntry('言葉', [{type: 'structured-content',
+        content: [
+            {tag: 'table',
+                content: [
+                    {tag: 'thead', content: {tag: 'tr', content: [{tag: 'th'}, {tag: 'th', content: 'A|B'}, {tag: 'th', content: 'C'}]}},
+                    {tag: 'tbody',
+                        content: [
+                            {tag: 'tr', content: [{tag: 'td', rowSpan: 2, content: 'shared'}, {tag: 'td', colSpan: 2, content: ['one', {tag: 'br'}, 'two']}]},
+                            {tag: 'tr', content: [{tag: 'td'}, {tag: 'td', content: 'last'}]},
+                        ]},
+                ]},
+            {tag: 'table', content: {tag: 'tr', content: [{tag: 'td', content: 'x'}, {tag: 'td', content: 'y'}]}},
+        ]}])]);
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '[data-action="copy-entry"]')).click();
+    expect(clipboard.text).toContain('|  | A\\|B | C |\n| --- | --- | --- |\n| shared | one; two | one; two |\n| shared |  | last |');
+    expect(clipboard.text).toContain('|  |  |\n| --- | --- |\n| x | y |');
+});
+
+test('Copy separates Markdown tables from following prose', async ({window}) => {
+    const {clipboard, render} = await setupSearch();
+    await render([createEntry('言葉', [{type: 'structured-content',
+        content: [
+            'before',
+            {tag: 'table', content: {tag: 'tr', content: [{tag: 'th', content: 'Header'}]}},
+            'after',
+        ]}])]);
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '[data-action="copy-entry"]')).click();
+    expect(clipboard.text).toBe('# 言葉 (ことば)\n\n## 1. Dictionary A\n言葉 (ことば)\nbefore\n\n| Header |\n| --- |\n\nafter');
+});
+
+
+test('Copy represents nested tables in a fenced block with readable row and column boundaries', async ({window}) => {
+    const {clipboard, render} = await setupSearch();
+    await render([createEntry('言葉', [{type: 'structured-content',
+        content: {tag: 'table',
+            content: {tag: 'tr',
+                content: [
+                    {tag: 'td', content: 'outer'},
+                    {tag: 'td',
+                        content: {tag: 'table',
+                            content: [
+                                {tag: 'tr', content: [{tag: 'td'}, {tag: 'td', content: 'a|b'}, {tag: 'td', content: 'c'}, {tag: 'td'}]},
+                                {tag: 'tr', content: [{tag: 'td', content: '```'}, {tag: 'td', content: 'd'}]},
+                            ]}},
+                ]}}}])]);
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '[data-action="copy-entry"]')).click();
+    expect(clipboard.text).toContain('\n````\nouter\t\ta|b\tc\t\n```\td\t\t\n````');
+});
+
+
+test('Copy recovers original Jitendex forms symbols only in verified source contexts', async ({window}) => {
+    const {clipboard, render} = await setupSearch();
+    // Exact forms subtree from the official 2026.10.03.0 release; CC BY-SA 4.0 Stephen Kraus.
+    const forms = /** @type {import('structured-content').StyledElement} */ (parseJson(readFileSync(new URL('data/copy-jitendex-forms.json', import.meta.url), 'utf8')));
+    const entry = createEntry('日本語', [{type: 'structured-content',
+        content: [forms,
+            {tag: 'span', title: 'unrelated tooltip'},
+            {tag: 'div', data: {content: 'forms'}, content: {tag: 'span', title: 'outside table'}},
+            {tag: 'table', content: {tag: 'tr', content: {tag: 'td', data: {class: 'form-valid'}, content: {tag: 'span', title: 'outside forms'}}}},
+            {tag: 'li',
+                data: {content: 'forms'},
+                content: {tag: 'table',
+                    content: {tag: 'tr',
+                        content: [
+                            {tag: 'td', data: {class: 'form-irr'}, content: {tag: 'span', title: 'irregular form'}},
+                            {tag: 'td', data: {class: 'form-old'}, content: {tag: 'span', title: 'old kanji form (kyūjitai)'}},
+                            {tag: 'td', data: {class: 'form-rare'}, content: {tag: 'span', title: 'rarely used form'}},
+                            {tag: 'td', data: {class: 'form-out'}, content: {tag: 'span', title: 'archaic or obsolete reading'}},
+                            {tag: 'td', data: {class: 'form-valid'}, content: {tag: 'span', title: 'original additional title'}},
+                            {tag: 'td', data: {class: 'form-valid'}, content: {tag: 'span', title: 'do not replace visible text', content: 'visible'}},
+                            {tag: 'td', data: {class: 'tooltip'}, content: {tag: 'span', title: 'unknown context'}},
+                        ]}}}]}]);
+    entry.headwords[0].reading = 'にほんご';
+    entry.definitions[0].dictionary = 'Jitendex.org [2026-10-03]';
+    await render([entry]);
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '[data-action="copy-entry"]')).click();
+    expect(clipboard.text).toContain('|  | 日本語 |\n| --- | --- |\n| にほんご | high priority form |\n| にっぽんご | valid form/reading combination |');
+    expect(clipboard.text).toContain('| irregular form | old kanji form (kyūjitai) | rarely used form | archaic or obsolete reading | original additional title | visible |  |');
+    expect(clipboard.text).not.toMatch(/unrelated tooltip|outside table|outside forms|do not replace|unknown context/);
+    entry.definitions[0].dictionary = 'Dictionary A';
+    await render([entry]);
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '[data-action="copy-entry"]')).click();
+    expect(clipboard.text).not.toMatch(/high priority form|valid form\/reading|irregular form|original additional title/);
+});
+
+
+test('Copy recovers titled form cells inside Jitendex sense-group lists', async ({window}) => {
+    const {clipboard, render} = await setupSearch();
+    const entry = createEntry('言葉', [{type: 'structured-content', content: {tag: 'ul', data: {content: 'sense-groups'}, content: {tag: 'li', data: {content: 'forms'}, content: {tag: 'table', content: {tag: 'tr', content: {tag: 'td', data: {class: 'form-out'}, content: {tag: 'span', title: 'archaic or obsolete reading'}}}}}}}]);
+    entry.definitions[0].dictionary = 'Jitendex.org [2026-10-03]';
+    await render([entry]);
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '[data-action="copy-entry"]')).click();
+    expect(clipboard.text).toContain('archaic or obsolete reading');
+});
+
+
+test('Copy retains source cells when table spans would expand excessively or are malformed', async ({window}) => {
+    const {clipboard, render} = await setupSearch();
+    const cases = [Number.MAX_SAFE_INTEGER, Infinity, -1, 1.5, Number.NaN];
+    for (const colSpan of cases) {
+        await render([createEntry('言葉', [{type: 'structured-content',
+            content: {tag: 'table',
+                content: {tag: 'tr',
+                    content: [
+                        {tag: 'td', colSpan, content: '*original*'}, {tag: 'td', content: 'last'},
+                    ]}}}])]);
+        /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '[data-action="copy-entry"]')).click();
+        expect(clipboard.text).toContain('\n```\n*original*\tlast\n```');
+        expect(clipboard.text.length).toBeLessThan(200);
+    }
+});
+
+
+test('Copy avoids multiplying large cell text by a large span', async ({window}) => {
+    const {clipboard, render} = await setupSearch();
+    const text = 'original'.repeat(100);
+    await render([createEntry('言葉', [{type: 'structured-content', content: {tag: 'table', content: {tag: 'tr', content: {tag: 'td', colSpan: 9999, content: text}}}}])]);
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '[data-action="copy-entry"]')).click();
+    expect(clipboard.text.length).toBeLessThan(2000);
+    expect(clipboard.text).toContain(`\n\`\`\`\n${text}\n\`\`\``);
+});
+
+
+test('Copy protects literal entity, rule, and numbered-list text from Markdown interpretation', async ({window}) => {
+    const {clipboard, render} = await setupSearch();
+    await render([createEntry('言葉', ['&copy;\n---\n===\n1. literal\n- literal'])]);
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '[data-action="copy-entry"]')).click();
+    expect(clipboard.text).toContain(String.raw`\&copy;
+\-\-\-
+\=\=\=
+1\. literal
+\- literal`);
+});
+
+test('Copy escapes literal tilde fences and strikethrough before later dictionary sections', async ({window}) => {
+    const {api, clipboard, render} = await setupSearch();
+    vi.spyOn(api, 'modifySettings').mockResolvedValue([{result: true}]);
+    const entry = createEntry('言葉', ['~~~\n~~literal~~']);
+    entry.definitions.push({...entry.definitions[0], dictionary: 'Dictionary B', entries: ['second']});
+    await render([entry]);
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '[data-action="copy-entry"]')).click();
+    expect(clipboard.text).toBe('# 言葉 (ことば)\n\n## 1. Dictionary A\n言葉 (ことば)\n\\~\\~\\~\n\\~\\~literal\\~\\~\n\n## 2. Dictionary B\n言葉 (ことば)\nsecond');
+    const format = /** @type {HTMLSelectElement} */ (querySelectorNotNull(window.document, '#copy-format'));
+    format.value = 'text';
+    format.dispatchEvent(new Event('change'));
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '[data-action="copy-entry"]')).click();
+    expect(clipboard.text).toBe('言葉 (ことば)\n\n1. Dictionary A\n言葉 (ことば)\n~~~\n~~literal~~\n\n2. Dictionary B\n言葉 (ことば)\nsecond');
+});
+
+
+test('Copy keeps image counts and readable inspector context with empty table cells', async ({window}) => {
+    const {clipboard, render} = await setupSearch();
+    setupInspectorBoundary(window);
+    await render([createEntry('言葉', [{type: 'structured-content',
+        content: [
+            {tag: 'table',
+                content: [
+                    {tag: 'tr', content: [{tag: 'th'}, {tag: 'th', content: 'Header'}, {tag: 'th'}]},
+                    {tag: 'tr', content: [{tag: 'td', content: 'reading'}, {tag: 'td', content: {tag: 'img', path: 'label.svg', alt: 'Label'}}, {tag: 'td'}]},
+                ]},
+            'before *literal* ',
+            {tag: 'img', path: 'unknown.svg'},
+            'after',
+        ]}])]);
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '[data-action="copy-entry"]')).click();
+    expect(clipboard.text).toContain('| reading | Label |  |');
+    expect(querySelectorNotNull(window.document, '.copy-entry-status').textContent).toBe('Copied. 1 unresolved image(s) omitted.');
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '[data-action="inspect-copy-images"]')).click();
+    expect(querySelectorNotNull(window.document, '.copy-image-context').textContent).toBe('\tHeader\t\nreading\tLabel\t\nbefore *literal* after');
+});
+
+
+test('Copy plain text retains literal text, numbering, variants, table boundaries and recovered symbols', async ({window}) => {
+    const {api, clipboard, render} = await setupSearch();
+    vi.spyOn(api, 'modifySettings').mockResolvedValue([{result: true}]);
+    const forms = /** @type {import('structured-content').Content} */ (parseJson(readFileSync(new URL('data/copy-jitendex-forms.json', import.meta.url), 'utf8')));
+    const entry = createEntry('日本語', ['*literal* | [note]', {type: 'structured-content',
+        content: [forms,
+            {tag: 'ol', content: [{tag: 'li', content: 'first'}, {tag: 'li', content: 'second'}]},
+            {tag: 'table',
+                content: [
+                    {tag: 'tr', content: [{tag: 'td', rowSpan: 2, content: 'shared'}, {tag: 'td', colSpan: 2, content: ['one', {tag: 'br'}, 'two']}]},
+                    {tag: 'tr', content: [{tag: 'td'}, {tag: 'td', content: 'last'}]},
+                ]}]}]);
+    entry.headwords[0].reading = 'にほんご';
+    entry.headwords.push({...entry.headwords[0], index: 1, headwordIndex: 1, term: '詞', reading: 'コトバ'});
+    entry.definitions[0].dictionary = 'Jitendex.org [2026-10-03]';
+    entry.definitions[0].headwordIndices = [0, 1];
+    entry.definitions.push({...entry.definitions[0], dictionary: 'Dictionary A', entries: ['other']});
+    await render([entry]);
+    const format = /** @type {HTMLSelectElement} */ (querySelectorNotNull(window.document, '#copy-format'));
+    format.value = 'text';
+    format.dispatchEvent(new Event('change'));
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '[data-action="copy-entry"]')).click();
+    expect(clipboard.text).toContain('日本語 (にほんご)\n詞 (コトバ)\n\n1. Jitendex.org [2026-10-03]');
+    expect(clipboard.text).toContain('日本語 (にほんご), 詞 (コトバ)\n*literal* | [note]');
+    expect(clipboard.text).toContain('\t日本語\nにほんご\thigh priority form\nにっぽんご\tvalid form/reading combination');
+    expect(clipboard.text).toContain('1. first\n2. second');
+    expect(clipboard.text).toContain('shared\tone; two\tone; two\nshared\t\tlast');
+    expect(clipboard.text).toContain('\n\n2. Dictionary A');
+    expect(clipboard.text).not.toMatch(/^#|^\| ---/m);
+    /** @type {HTMLInputElement} */ (querySelectorNotNull(window.document, '#copy-dictionaries input[data-dictionary="Dictionary A"]')).click();
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '[data-action="copy-entry"]')).click();
+    expect(clipboard.text).not.toContain('Dictionary A');
+    expect(clipboard.text).toContain('1. Jitendex.org [2026-10-03]');
+});
+
+
+test('Copy preserves the clipboard when a table contains only unresolved images', async ({window}) => {
+    const {clipboard, render} = await setupSearch();
+    await render([createEntry('言葉', [{type: 'structured-content', content: {tag: 'table', content: {tag: 'tr', content: {tag: 'td', content: {tag: 'img', path: 'unknown.svg'}}}}}])]);
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '[data-action="copy-entry"]')).click();
+    expect(clipboard.text).toBe('previous clipboard');
+    expect(querySelectorNotNull(window.document, '.copy-entry-status').textContent).toBe('No dictionary content to copy.');
+});
+
+for (const kind of ['fresh', 'upgraded']) {
+    test(`Copy options default to Markdown for ${kind} settings`, async ({window}) => {
+        vi.stubGlobal('fetch', fetch);
+        vi.stubGlobal('chrome', chrome);
+        const util = new OptionsUtil();
+        await util.prepare();
+        const legacy = {version: 79, profileCurrent: 0, global: {}, profiles: [{name: 'Default', options: {general: {}}}]};
+        const saved = kind === 'fresh' ? util.getDefault() : await util.update(legacy);
+        await setupSearch(false, 'search', saved);
+        const select = /** @type {HTMLSelectElement} */ (querySelectorNotNull(window.document, '#copy-format'));
+        expect(select.value).toBe('markdown');
+        expect(select.labels?.[0].textContent).toBe('Copy format');
+        expect([...select.options].map(({textContent, value}) => [textContent, value])).toEqual([
+            ['Markdown', 'markdown'], ['Plain text', 'text'],
+        ]);
+    });
+}
+
+test('Copy format and headword reduction survive reopening and remains independent across profiles', async ({window}) => {
+    const {document} = window;
+    const {api, application, display, optionsFull} = await setupSearch();
+    optionsFull.profiles.push({...structuredClone(optionsFull.profiles[0]), name: 'Other'});
+    const util = new OptionsUtil();
+    await util.prepare();
+    /** @type {Record<string, unknown>} */
+    let storage = {};
+    vi.stubGlobal('chrome', {...globalThis.chrome,
+        storage: {local: {
+            set: (/** @type {Record<string, unknown>} */ values, /** @type {() => void} */ callback) => { storage = values; callback(); },
+            get: (/** @type {string[]} */ _keys, /** @type {(values: Record<string, unknown>) => void} */ callback) => { callback(storage); },
+        }}});
+    vi.spyOn(api, 'optionsGet').mockImplementation(async (context) => optionsFull.profiles[context.index ?? optionsFull.profileCurrent].options);
+    vi.spyOn(api, 'modifySettings').mockImplementation(async (targets, source) => {
+        for (const target of targets) {
+            if (target.action !== 'set') { throw new Error('Expected a setting update'); }
+            const context = target.optionsContext;
+            const index = context?.index ?? optionsFull.profileCurrent;
+            const options = target.scope === 'global' ? optionsFull : optionsFull.profiles[index].options;
+            new ObjectPropertyAccessor(options).set(ObjectPropertyAccessor.getPathArray(target.path), target.value);
+        }
+        await util.save(optionsFull);
+        application.trigger('optionsUpdated', {source});
+        return [{result: true}];
+    });
+    await display.updateOptions();
+    await vi.waitFor(() => { expect(document.querySelectorAll('#profile-select-option-group option')).toHaveLength(2); });
+    const select = /** @type {HTMLSelectElement} */ (querySelectorNotNull(document, '#copy-format'));
+    select.value = 'text';
+    select.dispatchEvent(new Event('change'));
+    await vi.waitFor(() => { expect(storage.options).toBeTypeOf('string'); });
+    const reduction = /** @type {HTMLInputElement} */ (querySelectorNotNull(document, '#copy-reduce-headword-repetition'));
+    reduction.click();
+    await vi.waitFor(() => { expect(optionsFull.profiles[0].options.general.copyReduceHeadwordRepetition).toBe(true); });
+    const profiles = /** @type {HTMLSelectElement} */ (querySelectorNotNull(document, '#profile-select'));
+    profiles.value = '1';
+    profiles.dispatchEvent(new Event('change'));
+    await vi.waitFor(() => { expect(select.value).toBe('markdown'); });
+    expect(reduction.checked).toBe(false);
+    profiles.value = '0';
+    profiles.dispatchEvent(new Event('change'));
+    await vi.waitFor(() => { expect(select.value).toBe('text'); });
+    expect(reduction.checked).toBe(true);
+    const reloaded = await util.load();
+    select.replaceWith(select.cloneNode(true));
+    profiles.replaceWith(profiles.cloneNode(true));
+    reduction.replaceWith(reduction.cloneNode(true));
+    await setupSearch(false, 'search', reloaded);
+    expect(/** @type {HTMLSelectElement} */ (querySelectorNotNull(document, '#copy-format')).value).toBe('text');
+    expect(/** @type {HTMLInputElement} */ (querySelectorNotNull(document, '#copy-reduce-headword-repetition')).checked).toBe(true);
+});
+
+for (const format of ['markdown', 'text']) {
+    test(`Result-entry Copy uses the selected ${format} format`, async ({window}) => {
+        const {api, clipboard, render} = await setupSearch();
+        vi.spyOn(api, 'modifySettings').mockResolvedValue([{result: true}]);
+        const select = /** @type {HTMLSelectElement} */ (querySelectorNotNull(window.document, '#copy-format'));
+        select.value = format;
+        select.dispatchEvent(new Event('change'));
+        await render([createEntry('言葉', ['word'])]);
+        /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '[data-action="copy-entry"]')).click();
+        expect(clipboard.text).toContain(format === 'markdown' ? '# 言葉 (ことば)' : '言葉 (ことば)');
+        expect(clipboard.text).toContain(format === 'markdown' ? '## 1. Dictionary A' : '1. Dictionary A');
+        expect(clipboard.text).toContain('word');
+        if (format === 'text') { expect(clipboard.text).not.toContain('#'); }
+    });
+}
+
+for (const failure of ['throws', 'returns error']) {
+    test(`Copy format reports a save that ${failure} and restores the saved choice`, async ({window}) => {
+        const {api} = await setupSearch();
+        vi.spyOn(api, 'modifySettings').mockImplementation(async () => {
+            if (failure === 'throws') { throw new Error('Storage unavailable'); }
+            return [{error: {name: 'Error', message: 'Storage unavailable', stack: ''}}];
+        });
+        const select = /** @type {HTMLSelectElement} */ (querySelectorNotNull(window.document, '#copy-format'));
+        select.value = 'text';
+        select.dispatchEvent(new Event('change'));
+        await vi.waitFor(() => {
+            expect(querySelectorNotNull(window.document, '#copy-options-status').textContent).toBe('Could not save copy options. Please try again.');
+        });
+        expect(select.value).toBe('markdown');
+    });
+}
+
+test('Image inspector retains plain-text context when Copy uses Markdown', async ({window}) => {
+    const {render} = await setupSearch();
+    window.HTMLDialogElement.prototype.showModal = vi.fn();
+    await render([createEntry('言葉', [{type: 'structured-content',
+        content: [
+            {tag: 'div', content: 'Context heading'},
+            {tag: 'div', content: 'before *literal*'},
+            {tag: 'img', path: 'missing.svg'},
+        ]}])]);
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '[data-action="inspect-copy-images"]')).click();
+    const context = querySelectorNotNull(window.document, '.copy-image-context').textContent;
+    expect(context).toContain('before *literal*');
+    expect(context).not.toContain('#');
+});
+
+
+test('Copy options reduce generated headword repetition and restore the checkbox after a failed write', async ({window}) => {
+    const {api, options, clipboard, render} = await setupSearch();
+    const persist = vi.spyOn(api, 'modifySettings').mockImplementation(async (targets) => {
+        for (const target of targets) {
+            if (target.action !== 'set') { throw new Error('Expected profile setting'); }
+            new ObjectPropertyAccessor(options).set(ObjectPropertyAccessor.getPathArray(target.path), target.value);
+        }
+        return [{result: true}];
+    });
+    await render([createEntry('言葉', ['word'])]);
+    const checkbox = /** @type {HTMLInputElement} */ (querySelectorNotNull(window.document, '#copy-reduce-headword-repetition'));
+    expect(checkbox.checked).toBe(false);
+    checkbox.click();
+    await vi.waitFor(() => { expect(persist).toHaveBeenCalled(); });
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '[data-action="copy-entry"]')).click();
+    expect(clipboard.text).toBe('# 言葉 (ことば)\n\n## 1. Dictionary A\nword');
+    persist.mockRejectedValue(new Error('Storage unavailable'));
+    checkbox.click();
+    await vi.waitFor(() => { expect(querySelectorNotNull(window.document, '#copy-options-status').textContent).toContain('Could not save'); });
+    expect(checkbox.checked).toBe(true);
+});
+
+
+test('Content inspector previews the complete result, saves the first-match rule, and preserves a failed draft', async ({window}) => {
+    setupInspectorBoundary(window);
+    const {api, optionsFull, clipboard, render} = await setupSearch();
+    mockRulePersistence(api, optionsFull);
+    await render([createEntry('言葉', [{type: 'structured-content', content: {tag: 'span', data: {kind: 'label'}, title: 'Original title', content: 'original'}}])]);
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '[data-action="inspect-copy-content"]')).click();
+    expect(/** @type {HTMLSelectElement} */ (querySelectorNotNull(window.document, '#copy-content-candidate')).value).toBe('0');
+    expect(querySelectorNotNull(window.document, '#copy-content-context').textContent).toContain('Original title');
+    const matcher = /** @type {HTMLTextAreaElement} */ (querySelectorNotNull(window.document, '#copy-content-match'));
+    expect(parseJson(matcher.value)).toMatchObject({tag: 'span', data: {kind: 'label'}});
+    const action = /** @type {HTMLSelectElement} */ (querySelectorNotNull(window.document, '#copy-content-action'));
+    action.value = 'replace';
+    action.dispatchEvent(new Event('change'));
+    const text = /** @type {HTMLTextAreaElement} */ (querySelectorNotNull(window.document, '#copy-content-text'));
+    text.value = 'replacement';
+    text.dispatchEvent(new Event('input', {bubbles: true}));
+    const save = /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '#copy-content-save'));
+    expect(save.disabled).toBe(true);
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '#copy-content-preview-button')).click();
+    expect(querySelectorNotNull(window.document, '#copy-content-preview').textContent).toContain('# 言葉 (ことば)');
+    expect(querySelectorNotNull(window.document, '#copy-content-preview').textContent).toContain('replacement');
+    expect(querySelectorNotNull(window.document, '#copy-content-preview').textContent).not.toContain('original');
+    save.click();
+    await vi.waitFor(() => {
+        expect(querySelectorNotNull(window.document, '#copy-content-inspector-status').textContent).toBe('Rules saved. Copy again to use them.');
+        expect(/** @type {HTMLFieldSetElement} */ (querySelectorNotNull(window.document, '#copy-content-fields')).disabled).toBe(false);
+    });
+    expect(optionsFull.global.copyContentRules).toHaveLength(8);
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '[data-action="copy-entry"]')).click();
+    expect(clipboard.text).toContain('replacement');
+    text.value = 'unsaved draft';
+    text.dispatchEvent(new Event('input', {bubbles: true}));
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '#copy-content-preview-button')).click();
+    vi.spyOn(api, 'modifySettings').mockRejectedValue(new Error('Storage unavailable'));
+    save.click();
+    await vi.waitFor(() => { expect(querySelectorNotNull(window.document, '#copy-content-inspector-status').textContent).toContain('Could not save'); });
+    expect(text.value).toBe('unsaved draft');
+    expect(optionsFull.global.copyContentRules).toHaveLength(8);
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '[data-action="copy-entry"]')).click();
+    expect(clipboard.text).toContain('replacement');
+    mockRulePersistence(api, optionsFull);
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '#copy-content-delete')).click();
+    expect(querySelectorNotNull(window.document, '#copy-content-inspector-status').textContent).toContain('Draft preview');
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '#copy-content-save')).click();
+    await vi.waitFor(() => {
+        expect(querySelectorNotNull(window.document, '#copy-content-active-rule').textContent).toBe('No matching rule.');
+        expect(/** @type {HTMLFieldSetElement} */ (querySelectorNotNull(window.document, '#copy-content-fields')).disabled).toBe(false);
+    });
+    expect(optionsFull.global.copyContentRules).toHaveLength(7);
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '[data-action="copy-entry"]')).click();
+    expect(clipboard.text).toContain('original');
+});
+
+
+test('Content Import validates before persistence and failed writes leave Copy and the inspector draft intact', async ({window}) => {
+    setupInspectorBoundary(window);
+    const {api, optionsFull, clipboard, render} = await setupSearch();
+    mockRulePersistence(api, optionsFull);
+    const rule = {id: 'label', dictionary: 'Dictionary A', revision: '2026-01', match: {tag: 'span', data: {kind: 'label'}}, action: 'replace', text: 'saved'};
+    await importRules({version: 1, rules: [rule]}, 'content');
+    expect(optionsFull.global.copyContentRules).toEqual([rule]);
+    await render([createEntry('言葉', [{type: 'structured-content', content: {tag: 'span', data: {kind: 'label'}, content: 'original'}}])]);
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '[data-action="inspect-copy-content"]')).click();
+    const text = /** @type {HTMLTextAreaElement} */ (querySelectorNotNull(window.document, '#copy-content-text'));
+    text.value = 'draft';
+    text.dispatchEvent(new Event('input', {bubbles: true}));
+    const persist = vi.spyOn(api, 'modifySettings');
+    for (const invalid of [
+        {version: 2, rules: [rule]},
+        {version: 1, rules: [rule, rule]},
+        {version: 1, rules: [{...rule, match: {}}]},
+        {version: 1, rules: [{...rule, match: {tag: 'span', selector: '.rendered'}}]},
+        {version: 1, rules: [{...rule, action: 'replace', text: ''}]},
+        {version: 1, rules: [{...rule, action: 'omit'}]},
+        '{invalid json',
+    ]) {
+        persist.mockClear();
+        await importRules(invalid, 'content');
+        expect(querySelectorNotNull(window.document, '#copy-options-status').textContent).toContain('Could not import');
+        expect(persist).not.toHaveBeenCalled();
+        expect(optionsFull.global.copyContentRules).toEqual([rule]);
+    }
+    for (const failure of ['throws', 'error']) {
+        persist.mockImplementation(async () => {
+            if (failure === 'throws') { throw new Error('Storage unavailable'); }
+            return [{error: {name: 'Error', message: 'Storage unavailable', stack: ''}}];
+        });
+        await importRules({version: 1, rules: []}, 'content');
+        expect(querySelectorNotNull(window.document, '#copy-options-status').textContent).toContain('Could not import');
+        expect(text.value).toBe('draft');
+        expect(optionsFull.global.copyContentRules).toEqual([rule]);
+        /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '[data-action="copy-entry"]')).click();
+        expect(clipboard.text).toContain('saved');
+    }
+});
+
+test('Content inspector order controls change first-match handling and retain inactive rules in Export', async ({window}) => {
+    setupInspectorBoundary(window);
+    const {api, optionsFull, clipboard, render} = await setupSearch();
+    mockRulePersistence(api, optionsFull);
+    const first = {id: 'first', dictionary: 'Dictionary A', revision: '2026-01', match: {tag: 'span'}, action: 'replace', text: 'first match'};
+    const second = {...first, id: 'second', text: 'second match'};
+    const inactive = {...first, id: 'inactive', revision: 'old'};
+    const uninstalled = {...first, id: 'uninstalled', dictionary: 'Uninstalled'};
+    await importRules({version: 1, rules: [inactive, first, second, uninstalled]}, 'content');
+    await render([createEntry('言葉', [{type: 'structured-content', content: {tag: 'span', content: 'original'}}])]);
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '[data-action="inspect-copy-content"]')).click();
+    expect(querySelectorNotNull(window.document, '#copy-content-active-rule').textContent).toContain('first');
+    expect(querySelectorNotNull(window.document, '#copy-content-inactive').textContent).toContain('old');
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '#copy-content-earlier')).click();
+    expect(querySelectorNotNull(window.document, '#copy-content-inspector-status').textContent).toContain('Draft preview');
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '#copy-content-save')).click();
+    await vi.waitFor(() => {
+        expect(querySelectorNotNull(window.document, '#copy-content-inspector-status').textContent).toBe('Rules saved. Copy again to use them.');
+        expect(/** @type {HTMLFieldSetElement} */ (querySelectorNotNull(window.document, '#copy-content-fields')).disabled).toBe(false);
+    });
+    expect(optionsFull.global.copyContentRules[0].id).toBe('first');
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '#copy-content-later')).click();
+    expect(querySelectorNotNull(window.document, '#copy-content-inspector-status').textContent).toContain('Draft preview');
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '#copy-content-save')).click();
+    await vi.waitFor(() => {
+        expect(querySelectorNotNull(window.document, '#copy-content-inspector-status').textContent).toBe('Rules saved. Copy again to use them.');
+        expect(/** @type {HTMLFieldSetElement} */ (querySelectorNotNull(window.document, '#copy-content-fields')).disabled).toBe(false);
+    });
+    expect(optionsFull.global.copyContentRules[0].id).toBe('inactive');
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '#copy-content-later')).click();
+    expect(querySelectorNotNull(window.document, '#copy-content-inspector-status').textContent).toContain('Draft preview');
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '#copy-content-save')).click();
+    await vi.waitFor(() => {
+        expect(querySelectorNotNull(window.document, '#copy-content-inspector-status').textContent).toBe('Rules saved. Copy again to use them.');
+        expect(/** @type {HTMLFieldSetElement} */ (querySelectorNotNull(window.document, '#copy-content-fields')).disabled).toBe(false);
+    });
+    expect(optionsFull.global.copyContentRules[1].id).toBe('second');
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '[data-action="copy-entry"]')).click();
+    expect(clipboard.text).toContain('second match');
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '#copy-content-earlier')).click();
+    expect(querySelectorNotNull(window.document, '#copy-content-inspector-status').textContent).toContain('Draft preview');
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '#copy-content-save')).click();
+    await vi.waitFor(() => {
+        expect(querySelectorNotNull(window.document, '#copy-content-inspector-status').textContent).toBe('Rules saved. Copy again to use them.');
+        expect(/** @type {HTMLFieldSetElement} */ (querySelectorNotNull(window.document, '#copy-content-fields')).disabled).toBe(false);
+    });
+    expect(optionsFull.global.copyContentRules[0].id).toBe('second');
+    /** @type {Blob | null} */
+    let exported = null;
+    window.URL.createObjectURL = vi.fn((/** @type {Blob|MediaSource} */ blob) => {
+        exported = /** @type {Blob} */ (blob);
+        return 'blob:rules';
+    });
+    vi.spyOn(window.HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '#copy-content-rules-export')).click();
+    const json = await new Promise((/** @type {(value: string) => void} */ resolve) => {
+        const reader = new FileReader();
+        reader.onload = () => { resolve(/** @type {string} */ (reader.result)); };
+        reader.readAsText(/** @type {Blob} */ (exported));
+    });
+    expect(parseJson(json)).toEqual({version: 1, rules: optionsFull.global.copyContentRules});
+    await importRules({version: 1, rules: []}, 'content');
+    const util = new OptionsUtil();
+    await util.prepare();
+    expect((await util.update(structuredClone(optionsFull))).global.copyContentRules).toEqual([]);
+});
+
+
+for (const format of ['markdown', 'text']) {
+    test(`Jitendex grammar seeds separate source labels and preserve their sense list in ${format} Copy`, async ({window}) => {
+        const {api, options, clipboard, render} = await setupSearch();
+        options.general.copyFormat = /** @type {'markdown' | 'text'} */ (format);
+        const entry = createEntry('飲む', [{type: 'structured-content',
+            content: {tag: 'li',
+                data: {content: 'sense-group'},
+                content: [
+                    {tag: 'span', title: "Godan verb with 'mu' ending", data: {class: 'tag', code: 'v5m', content: 'part-of-speech-info'}, content: '5-dan'},
+                    {tag: 'span', title: 'transitive verb', data: {class: 'tag', code: 'vt', content: 'part-of-speech-info'}, content: 'transitive'},
+                    {tag: 'ol', content: [{tag: 'li', content: 'to drink'}, {tag: 'li', content: 'to smoke (tobacco)'}]},
+                ]}}]);
+        entry.definitions[0].dictionary = 'Jitendex.org [2026-10-03]';
+        vi.spyOn(api, 'modifySettings').mockResolvedValue([{result: true}]);
+        const select = /** @type {HTMLSelectElement} */ (querySelectorNotNull(window.document, '#copy-format'));
+        select.value = format;
+        select.dispatchEvent(new Event('change'));
+        await render([entry]);
+        /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '[data-action="copy-entry"]')).click();
+        expect(clipboard.text).toContain('5-dan · transitive');
+        expect(clipboard.text).toMatch(/1\. to drink\s+2\. to smoke \(tobacco\)/);
+    });
+}
+
+
+test('Content inspector previews and saves source nodes with empty metadata on their ancestors', async ({window}) => {
+    setupInspectorBoundary(window);
+    const {api, optionsFull, render} = await setupSearch();
+    mockRulePersistence(api, optionsFull);
+    await render([createEntry('言葉', [{type: 'structured-content', content: {tag: 'div', data: {}, content: {tag: 'span', data: {}, content: 'Label'}}}])]);
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '[data-action="inspect-copy-content"]')).click();
+    const candidate = /** @type {HTMLSelectElement} */ (querySelectorNotNull(window.document, '#copy-content-candidate'));
+    candidate.value = '1';
+    candidate.dispatchEvent(new Event('change'));
+    const match = /** @type {HTMLTextAreaElement} */ (querySelectorNotNull(window.document, '#copy-content-match'));
+    expect(parseJson(match.value)).toEqual({tag: 'span', ancestors: [{tag: 'div'}]});
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '#copy-content-preview-button')).click();
+    expect(querySelectorNotNull(window.document, '#copy-content-preview').textContent).toContain('Label');
+    const save = /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '#copy-content-save'));
+    expect(save.disabled).toBe(false);
+    save.click();
+    await vi.waitFor(() => { expect(querySelectorNotNull(window.document, '#copy-content-inspector-status').textContent).toBe('Rules saved. Copy again to use them.'); });
+});
+
+
+test('Content inspector previews reordered group omission before persisting it', async ({window}) => {
+    setupInspectorBoundary(window);
+    const {api, optionsFull, clipboard, render} = await setupSearch();
+    mockRulePersistence(api, optionsFull);
+    const base = {dictionary: 'Dictionary A', revision: '2026-01', match: {tag: 'div'}};
+    await importRules({version: 1, rules: [{...base, id: 'keep', action: 'content'}, {...base, id: 'omit', action: 'omit'}]}, 'content');
+    await render([createEntry('言葉', [{type: 'structured-content', content: {tag: 'div', content: 'whole group'}}])]);
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '[data-action="inspect-copy-content"]')).click();
+    const persist = vi.spyOn(api, 'modifySettings');
+    persist.mockClear();
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '#copy-content-later')).click();
+    expect(querySelectorNotNull(window.document, '#copy-content-inspector-status').textContent).toContain('Draft preview');
+    expect(querySelectorNotNull(window.document, '#copy-content-preview').textContent).not.toContain('whole group');
+    expect(persist).not.toHaveBeenCalled();
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '[data-action="copy-entry"]')).click();
+    expect(clipboard.text).toContain('whole group');
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '#copy-content-save')).click();
+    await vi.waitFor(() => { expect(querySelectorNotNull(window.document, '#copy-content-inspector-status').textContent).toBe('Rules saved. Copy again to use them.'); });
+    expect(optionsFull.global.copyContentRules[0].id).toBe('omit');
+    /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '[data-action="copy-entry"]')).click();
+    expect(querySelectorNotNull(window.document, '.copy-entry-status').textContent).toBe('No dictionary content to copy.');
 });

@@ -1,0 +1,75 @@
+{
+    "tag": "div",
+    "data": {
+        "content": "forms"
+    },
+    "content": [
+        {
+            "tag": "span",
+            "title": "spelling and reading variants",
+            "data": {
+                "class": "tag",
+                "content": "forms-label"
+            },
+            "content": "forms"
+        },
+        {
+            "tag": "table",
+            "content": [
+                {
+                    "tag": "tr",
+                    "data": {
+                        "content": "forms-header-row"
+                    },
+                    "content": [
+                        {
+                            "tag": "th"
+                        },
+                        {
+                            "tag": "th",
+                            "content": "日本語"
+                        }
+                    ]
+                },
+                {
+                    "tag": "tr",
+                    "content": [
+                        {
+                            "tag": "th",
+                            "content": "にほんご"
+                        },
+                        {
+                            "tag": "td",
+                            "data": {
+                                "class": "form-pri"
+                            },
+                            "content": {
+                                "tag": "span",
+                                "title": "high priority form"
+                            }
+                        }
+                    ]
+                },
+                {
+                    "tag": "tr",
+                    "content": [
+                        {
+                            "tag": "th",
+                            "content": "にっぽんご"
+                        },
+                        {
+                            "tag": "td",
+                            "data": {
+                                "class": "form-valid"
+                            },
+                            "content": {
+                                "tag": "span",
+                                "title": "valid form/reading combination"
+                            }
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}

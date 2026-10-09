@@ -17,6 +17,8 @@
  */
 
 import {parseJson} from '../core/json.js';
+import {getCopyContentCandidates, validateCopyContentRuleDocument} from './copy-content-rules.js';
+import {CopyContentInspector} from './copy-content-inspector.js';
 import {validateCopyImageRuleDocument} from './copy-image-rules.js';
 import {ClipboardMonitor} from '../comm/clipboard-monitor.js';
 import {createApiMap, invokeApiMapHandler} from '../core/api-map.js';
@@ -60,6 +62,8 @@ export class SearchDisplayController {
         this._profileSelectContainer = querySelectorNotNull(document, '#search-option-profile-select');
         /** @type {HTMLSelectElement} */
         this._profileSelect = querySelectorNotNull(document, '#profile-select');
+        /** @type {HTMLSelectElement} */
+        this._copyFormatSelect = querySelectorNotNull(document, '#copy-format');
         /** @type {HTMLElement} */
         this._wanakanaSearchOption = querySelectorNotNull(document, '#search-option-wanakana');
         /** @type {EventListenerCollection} */
@@ -78,14 +82,24 @@ export class SearchDisplayController {
         this._copyingEntry = false;
         /** @type {Set<string>} */
         this._copyExcludedDictionaries = new Set();
+        /** @type {'markdown' | 'text'} */
+        this._copyFormat = 'markdown';
         /** @type {import('settings').CopyImageRule[]} */
         this._copyImageRules = [];
+        /** @type {import('settings').CopyContentRule[]} */
+        this._copyContentRules = [];
+        /** @type {boolean} */
+        this._copyReduceHeadwordRepetition = false;
+        /** @type {HTMLInputElement} */
+        this._copyReduceHeadwordRepetitionCheckbox = querySelectorNotNull(document, '#copy-reduce-headword-repetition');
         /** @type {Map<string, string>} */
         this._copyImageRevisions = new Map();
         /** @type {number} */
         this._copyImageRevisionRequest = 0;
         /** @type {CopyImageInspector} */
         this._copyImageInspector = new CopyImageInspector(this, display.application.api);
+        /** @type {CopyContentInspector} */
+        this._copyContentInspector = new CopyContentInspector(this);
         /** @type {import('clipboard-monitor').ClipboardReaderLike} */
         this._clipboardReaderLike = {
             getText: this._display.application.api.clipboardGet.bind(this._display.application.api),
@@ -110,6 +124,7 @@ export class SearchDisplayController {
         this._display.application.on('optionsUpdated', this._onOptionsUpdated.bind(this));
         this._display.application.on('databaseUpdated', () => {
             this._copyImageInspector.close();
+            this._copyContentInspector.close();
             void this.refreshCopyImageRevisions();
         });
 
@@ -140,11 +155,18 @@ export class SearchDisplayController {
         this._display.hotkeyHandler.on('keydownNonHotkey', this._onKeyDown.bind(this));
 
         this._profileSelect.addEventListener('change', this._onProfileSelectChange.bind(this), false);
+        this._copyFormatSelect.addEventListener('change', () => { void this._onCopyFormatChange(); });
+        this._copyReduceHeadwordRepetitionCheckbox.addEventListener('change', () => { void this._onCopyReduceHeadwordRepetitionChange(); });
         /** @type {HTMLInputElement} */
         const ruleFile = querySelectorNotNull(document, '#copy-image-rules-file');
         querySelectorNotNull(document, '#copy-image-rules-import').addEventListener('click', () => { ruleFile.click(); });
         ruleFile.addEventListener('change', () => { void this._importCopyImageRules(ruleFile); });
         querySelectorNotNull(document, '#copy-image-rules-export').addEventListener('click', () => { this._exportCopyImageRules(); });
+        /** @type {HTMLInputElement} */
+        const contentRuleFile = querySelectorNotNull(document, '#copy-content-rules-file');
+        querySelectorNotNull(document, '#copy-content-rules-import').addEventListener('click', () => { contentRuleFile.click(); });
+        contentRuleFile.addEventListener('change', () => { void this._importCopyContentRules(contentRuleFile); });
+        querySelectorNotNull(document, '#copy-content-rules-export').addEventListener('click', () => { this._exportCopyContentRules(); });
 
         const displayOptions = this._display.getOptions();
         if (displayOptions !== null) {
@@ -174,16 +196,84 @@ export class SearchDisplayController {
             this._copyImageRevisions = new Map(dictionaries.map(({title, revision}) => [title, revision]));
         } catch (error) {
             if (request !== this._copyImageRevisionRequest) { return; }
-            querySelectorNotNull(document, '#copy-options-status').textContent = 'Could not read dictionary revisions. Image rules are paused until they can be read.';
+            querySelectorNotNull(document, '#copy-options-status').textContent = 'Could not read dictionary revisions. Copy rules are paused until they can be read.';
         }
     }
 
     /**
      * @param {import('dictionary').TermDictionaryEntry} entry
+     * @param {'markdown' | 'text'} [format]
+     * @param {import('settings').CopyContentRule[]} [contentRules]
      * @returns {ReturnType<typeof getResultEntryText>}
      */
-    getCopyEntryText(entry) {
-        return getResultEntryText(entry, this._copyExcludedDictionaries, this._copyImageRules, this._copyImageRevisions);
+    getCopyEntryText(entry, format = this._copyFormat, contentRules = this._copyContentRules) {
+        return getResultEntryText(entry, this._copyExcludedDictionaries, this._copyImageRules, this._copyImageRevisions, format, {contentRules, reduceHeadwordRepetition: this._copyReduceHeadwordRepetition});
+    }
+
+    /** @returns {import('settings').CopyContentRule[]} */
+    getCopyContentRules() {
+        return this._copyContentRules;
+    }
+
+    /**
+     * @param {import('dictionary').TermDictionaryEntry} entry
+     * @returns {ReturnType<typeof getCopyContentCandidates>}
+     */
+    getCopyContentCandidates(entry) {
+        return getCopyContentCandidates(entry, this._copyExcludedDictionaries, this._copyContentRules, this._copyImageRevisions);
+    }
+
+    /** @param {import('settings').CopyContentRule[]} rules */
+    async saveCopyContentRules(rules) {
+        rules = validateCopyContentRuleDocument({version: 1, rules});
+        const results = await this._display.application.api.modifySettings([{
+            action: 'set', path: 'global.copyContentRules', value: rules, scope: 'global', optionsContext: null,
+        }], 'search-copy');
+        if (results.some(({error}) => typeof error !== 'undefined')) { throw new Error('Could not save content copy rules.'); }
+        this._copyContentRules = rules;
+    }
+
+    /** @param {HTMLInputElement} input */
+    async _importCopyContentRules(input) {
+        const file = input.files?.[0];
+        input.value = '';
+        if (typeof file === 'undefined') { return; }
+        const status = querySelectorNotNull(document, '#copy-options-status');
+        status.textContent = '';
+        try {
+            const text = await new Promise((/** @type {(value: string) => void} */ resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => { resolve(/** @type {string} */ (reader.result)); };
+                reader.onerror = () => { reject(new Error('Could not read the selected file.')); };
+                reader.readAsText(file);
+            });
+            await this.saveCopyContentRules(validateCopyContentRuleDocument(parseJson(text)));
+            status.textContent = 'Content copy rules imported.';
+        } catch (error) {
+            status.textContent = `Could not import content copy rules: ${error instanceof Error ? error.message : 'Please try again.'}`;
+        }
+    }
+
+    /** */
+    _exportCopyContentRules() {
+        const status = querySelectorNotNull(document, '#copy-options-status');
+        try {
+            const blob = new Blob([JSON.stringify({version: 1, rules: this._copyContentRules}, null, 4)], {type: 'application/json'});
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = 'yomitan-copy-content-rules.json';
+            document.body.appendChild(link);
+            try {
+                link.click();
+            } finally {
+                link.remove();
+                setTimeout(() => { URL.revokeObjectURL(url); }, 1000);
+            }
+            status.textContent = 'Content copy rules exported.';
+        } catch (error) {
+            status.textContent = 'Could not export content copy rules. Please try again.';
+        }
     }
 
     /** @param {import('settings').CopyImageRule[]} rules */
@@ -269,7 +359,7 @@ export class SearchDisplayController {
         button.type = 'button';
         button.dataset.action = 'copy-entry';
         button.textContent = 'Copy';
-        button.title = 'Copy this result as plain text';
+        button.title = 'Copy this result using the selected Copy format';
         const status = document.createElement('div');
         status.className = 'copy-entry-status';
         status.setAttribute('role', 'status');
@@ -281,7 +371,13 @@ export class SearchDisplayController {
         inspect.textContent = 'Inspect images';
         inspect.title = 'View dictionary images and edit their copy rules';
         inspect.addEventListener('click', () => { this._copyImageInspector.show(dictionaryEntry); });
-        querySelectorNotNull(element, '.actions').prepend(button, inspect);
+        const inspectContent = document.createElement('button');
+        inspectContent.type = 'button';
+        inspectContent.dataset.action = 'inspect-copy-content';
+        inspectContent.textContent = 'Inspect content';
+        inspectContent.title = 'View original dictionary content and edit its copy rules';
+        inspectContent.addEventListener('click', () => { this._copyContentInspector.show(dictionaryEntry); });
+        querySelectorNotNull(element, '.actions').prepend(button, inspect, inspectContent);
         button.addEventListener('click', () => {
             try {
                 const {text, unresolvedImages} = this.getCopyEntryText(dictionaryEntry);
@@ -356,6 +452,10 @@ export class SearchDisplayController {
     /** @param {import('settings').ProfileOptions} options */
     _updateCopyOptions(options) {
         this._copyExcludedDictionaries = new Set(options.general.copyExcludedDictionaries);
+        this._copyFormat = options.general.copyFormat;
+        this._copyFormatSelect.value = this._copyFormat;
+        this._copyReduceHeadwordRepetition = options.general.copyReduceHeadwordRepetition;
+        this._copyReduceHeadwordRepetitionCheckbox.checked = this._copyReduceHeadwordRepetition;
         const container = querySelectorNotNull(document, '#copy-dictionaries');
         const focusedDictionary = document.activeElement instanceof HTMLInputElement ? document.activeElement.dataset.dictionary : void 0;
         container.replaceChildren();
@@ -371,6 +471,57 @@ export class SearchDisplayController {
             row.appendChild(label);
             container.appendChild(row);
             if (name === focusedDictionary) { checkbox.focus({preventScroll: true}); }
+        }
+    }
+
+    /** */
+    async _onCopyFormatChange() {
+        const format = this._copyFormatSelect.value;
+        if (format !== 'markdown' && format !== 'text') { return; }
+        this._copyFormat = format;
+        const status = querySelectorNotNull(document, '#copy-options-status');
+        status.textContent = '';
+        try {
+            const results = await this._display.application.api.modifySettings([{
+                action: 'set',
+                path: 'general.copyFormat',
+                value: format,
+                scope: 'profile',
+                optionsContext: this._display.getOptionsContext(),
+            }], 'search-copy');
+            if (results.some(({error}) => typeof error !== 'undefined')) { throw new Error('Settings update failed'); }
+        } catch (e) {
+            await this._display.updateOptions();
+            status.textContent = 'Could not save copy options. Please try again.';
+        }
+    }
+
+    /** */
+    async _onCopyReduceHeadwordRepetitionChange() {
+        const checkbox = this._copyReduceHeadwordRepetitionCheckbox;
+        const previous = this._copyReduceHeadwordRepetition;
+        const options = this._display.getOptions();
+        this._copyReduceHeadwordRepetition = checkbox.checked;
+        checkbox.disabled = true;
+        const status = querySelectorNotNull(document, '#copy-options-status');
+        status.textContent = '';
+        try {
+            const results = await this._display.application.api.modifySettings([{
+                action: 'set',
+                path: 'general.copyReduceHeadwordRepetition',
+                value: checkbox.checked,
+                scope: 'profile',
+                optionsContext: this._display.getOptionsContext(),
+            }], 'search-copy');
+            if (results.some(({error}) => typeof error !== 'undefined')) { throw new Error('Settings update failed'); }
+        } catch (e) {
+            if (this._display.getOptions() === options) {
+                this._copyReduceHeadwordRepetition = previous;
+                checkbox.checked = previous;
+            }
+            status.textContent = 'Could not save copy options. Please try again.';
+        } finally {
+            checkbox.disabled = false;
         }
     }
 
@@ -417,6 +568,7 @@ export class SearchDisplayController {
      */
     _onContentUpdateStart({type, query}) {
         this._copyImageInspector.close();
+        this._copyContentInspector.close();
         let animate = false;
         let valid = false;
         let showBackButton = false;
@@ -896,6 +1048,7 @@ export class SearchDisplayController {
     async _updateProfileSelect() {
         const {profiles, profileCurrent, global} = await this._display.application.api.optionsGetFull();
         this._copyImageRules = global.copyImageRules;
+        this._copyContentRules = global.copyContentRules;
 
         /** @type {HTMLElement} */
         const optionGroup = querySelectorNotNull(document, '#profile-select-option-group');

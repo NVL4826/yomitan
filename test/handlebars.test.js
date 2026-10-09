@@ -16,6 +16,7 @@
  */
 
 import {describe, test} from 'vitest';
+import ReferenceHandlebars from 'handlebars';
 import {Handlebars} from '../ext/lib/handlebars.js';
 
 /**
@@ -23,7 +24,7 @@ import {Handlebars} from '../ext/lib/handlebars.js';
  * @returns {import('handlebars').TemplateDelegate<unknown>}
  */
 function compile(template) {
-    return Handlebars.compile(template);
+    return ReferenceHandlebars.compile(template);
 }
 
 /**

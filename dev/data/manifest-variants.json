@@ -256,10 +256,18 @@
                     "value": {
                         "gecko": {
                             "id": "{6b733b82-9261-47ee-a595-2dda294a4d08}",
-                            "strict_min_version": "115.0"
+                            "strict_min_version": "140.0",
+                            "data_collection_permissions": {
+                                "required": [
+                                    "websiteContent",
+                                    "browsingActivity",
+                                    "searchTerms",
+                                    "authenticationInfo"
+                                ]
+                            }
                         },
                         "gecko_android": {
-                            "strict_min_version": "115.0"
+                            "strict_min_version": "142.0"
                         }
                     }
                 },
@@ -330,7 +338,13 @@
         {
             "name": "firefox-android",
             "inherit": "firefox",
-            "fileName": "yomitan-firefox-android"
+            "fileName": "yomitan-firefox-android",
+            "excludeFiles": [
+                "sw.js",
+                "offscreen.html",
+                "js/background/offscreen.js",
+                "js/background/offscreen-main.js"
+            ]
         },
         {
             "name": "safari",

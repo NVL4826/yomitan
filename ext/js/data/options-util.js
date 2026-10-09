@@ -37,6 +37,8 @@ export class OptionsUtil {
         this._optionsSchema = null;
         /** @type {import('settings').CopyImageRule[]} */
         this._copyImageRuleSeed = [];
+        /** @type {import('settings').CopyContentRule[]} */
+        this._copyContentRuleSeed = [];
     }
 
     /** */
@@ -47,6 +49,9 @@ export class OptionsUtil {
         /** @type {import('settings').CopyImageRuleDocument} */
         const seed = await fetchJson('/data/copy-image-rules.json');
         this._copyImageRuleSeed = seed.rules;
+        /** @type {import('settings').CopyContentRuleDocument} */
+        const contentSeed = await fetchJson('/data/copy-content-rules.json');
+        this._copyContentRuleSeed = contentSeed.rules;
     }
 
     /**
@@ -174,6 +179,7 @@ export class OptionsUtil {
         const options = /** @type {import('settings').Options} */ (/** @type {JsonSchema} */ (this._optionsSchema).getValidValueOrDefault());
         options.version = optionsVersion;
         options.global.copyImageRules = clone(this._copyImageRuleSeed);
+        options.global.copyContentRules = clone(this._copyContentRuleSeed);
         return options;
     }
 
@@ -597,6 +603,8 @@ export class OptionsUtil {
             this._updateVersion77,
             this._updateVersion78,
             this._updateVersion79,
+            this._updateVersion80,
+            this._updateVersion81,
         ];
         /* eslint-enable @typescript-eslint/unbound-method */
         if (typeof targetVersion === 'number' && targetVersion < result.length) {
@@ -1885,6 +1893,33 @@ export class OptionsUtil {
     _updateVersion79(options) {
         if (typeof options.global.copyImageRules === 'undefined') {
             options.global.copyImageRules = clone(this._copyImageRuleSeed);
+        }
+    }
+
+    /**
+     * - Defaulted result-entry Copy to Markdown for each profile.
+     * @type {import('options-util').UpdateFunction}
+     */
+    _updateVersion80(options) {
+        for (const profile of options.profiles) {
+            if (typeof profile.options.general.copyFormat === 'undefined') {
+                profile.options.general.copyFormat = 'markdown';
+            }
+        }
+    }
+
+    /**
+     * - Initialized editable content rules once and defaulted headword reduction off.
+     * @type {import('options-util').UpdateFunction}
+     */
+    _updateVersion81(options) {
+        if (typeof options.global.copyContentRules === 'undefined') {
+            options.global.copyContentRules = clone(this._copyContentRuleSeed);
+        }
+        for (const profile of options.profiles) {
+            if (typeof profile.options.general.copyReduceHeadwordRepetition === 'undefined') {
+                profile.options.general.copyReduceHeadwordRepetition = false;
+            }
         }
     }
 
