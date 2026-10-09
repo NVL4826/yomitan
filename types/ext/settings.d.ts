@@ -93,6 +93,7 @@ export type CopyImageRuleDocument = {version: 1, rules: CopyImageRule[]};
 
 export type GlobalOptions = {
     copyImageRules: CopyImageRule[];
+    copyContentRules: CopyContentRule[];
     database: GlobalDatabaseOptions;
     dataTransmissionConsentShown: boolean;
 };
@@ -186,6 +187,7 @@ export type GeneralOptions = {
     stickySearchHeader: boolean;
     copyExcludedDictionaries: string[];
     copyFormat: 'markdown' | 'text';
+    copyReduceHeadwordRepetition: boolean;
     enableYomitanApi: boolean;
     yomitanApiAllowCssSanitizationBypass: boolean;
 };
