@@ -27,9 +27,9 @@ Content-bearing symbols and dictionary labels can lose meaning or boundaries dur
 
 Rules match original tags, a subset of custom metadata, optional exact title and empty-content conditions, and optional ancestor metadata. Matching ignores visual CSS classes synthesized by Yomitan. No script execution, HTML output, or automatic promotion of unrelated tooltips is required.
 
-A rule selects converted content, the original title, a literal replacement, or omission. Prefixes and suffixes apply to its selected output. User-entered text is escaped in Markdown. Selecting converted content preserves existing list and table structure.
+A rule selects converted content, the original title, a literal replacement, or omission. Prefixes and suffixes apply to its selected output. User-entered text is escaped in Markdown. Selecting converted content preserves existing list and table structure. Row and section prefixes/suffixes decorate the first/last applicable grid cells after merged-cell expansion; surviving rows retain their column positions.
 
-Separators join adjacent sibling labels matched by the same rule. An unmatched sibling ends the run. In the original Jitendex grammatical group, two spans precede an ordered list of senses: only the spans join, preserving the sense list. A group replacement or omission deliberately affects the complete selected group; the inspector must preview that scope before saving.
+Separators join adjacent sibling labels matched by the same rule. An unmatched sibling ends the run. In the original Jitendex grammatical group, two spans precede an ordered list of senses: only the spans join, preserving the sense list. A group replacement or omission deliberately affects the complete selected group; the inspector must preview that scope before saving. Reordering and deletion also stage a complete-result preview and require Save changes before persistence.
 
 Example mapping:
 

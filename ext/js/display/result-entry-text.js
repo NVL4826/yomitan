@@ -159,12 +159,28 @@ function escapeText(text, format) {
 }
 
 /**
+ * @param {string} left
+ * @param {string} right
+ * @param {'markdown'|'text'} format
+ * @returns {string}
+ */
+function joinText(left, right, format) {
+    const text = left + right;
+    if (format === 'text' || left.length === 0 || right.length === 0) { return text; }
+    // Escape markers assembled across literal boundaries without altering generated lists.
+    return text.replace(/^([ \t]*)([-+]|\d+[.)]|[-=]{2,})(?=\s|$)/gm, (/** @type {string} */ _, /** @type {string} */ space, /** @type {string} */ marker, /** @type {number} */ index) => {
+        const start = index + space.length;
+        return start < left.length && start + marker.length >= left.length ? `${space}${marker.replace(/[-+.)=]/g, '\\$&')}` : space + marker;
+    });
+}
+
+/**
  * @param {import('structured-content').Content|undefined} content
  * @param {string} dictionary
  * @param {ImageState} imageState
  * @param {'markdown'|'text'} format
  * @param {import('structured-content').Element[]} [ancestors]
- * @param {'normal'|'list-item'|'table-cell'|'table-fallback'} [layout]
+ * @param {'normal'|'list-item'|'table-cell'} [layout]
  * @returns {string}
  */
 function getStructuredContentText(content, dictionary, imageState, format, ancestors = [], layout = 'normal') {
@@ -177,8 +193,8 @@ function getStructuredContentText(content, dictionary, imageState, format, ances
         for (const item of content) {
             const rule = typeof item === 'object' && !Array.isArray(item) ? findCopyContentRule(item, ancestors, dictionary, imageState.revisions.get(dictionary), imageState.contentRules) : void 0;
             const output = getStructuredContentText(item, dictionary, imageState, format, ancestors, layout);
-            if (output.trim().length > 0 && rule && rule === previous && rule.action !== 'omit') { text += escapeText(rule.separator ?? '', format); }
-            text += output;
+            if (output.trim().length > 0 && rule && rule === previous && rule.action !== 'omit') { text = joinText(text, escapeText(rule.separator ?? '', format), format); }
+            text = joinText(text, output, format);
             previous = output.trim().length > 0 && rule?.action !== 'omit' ? rule : void 0;
         }
         return text;
@@ -189,22 +205,22 @@ function getStructuredContentText(content, dictionary, imageState, format, ances
     const children = [content, ...ancestors];
     let text;
     if (rule?.action === 'replace') {
-        text = escapeText(rule.text, format);
+        text = escapeText((rule.prefix ?? '') + rule.text + (rule.suffix ?? ''), format);
     } else if (rule?.action === 'title') {
-        text = escapeText('title' in content ? content.title ?? '' : '', format);
+        text = escapeText((rule.prefix ?? '') + ('title' in content ? content.title ?? '' : '') + (rule.suffix ?? ''), format);
     } else {
         switch (tag) {
             case 'img': text = escapeText(getImageText(content, dictionary, imageState), format); break;
             case 'br': text = '\n'; break;
             case 'rp': text = ''; break;
             case 'table':
-                text = layout === 'table-fallback' ? getStructuredContentText(content.content, dictionary, imageState, format, children, layout) : getTableText(content.content, dictionary, imageState, format, children);
+                text = getTableText(content.content, dictionary, imageState, format, children);
                 break;
             case 'tr':
             case 'thead':
             case 'tbody':
             case 'tfoot':
-                text = layout === 'table-fallback' ? getTableText(content, dictionary, imageState, format, ancestors, content) : getStructuredContentText(content.content, dictionary, imageState, format, children);
+                text = getStructuredContentText(content.content, dictionary, imageState, format, children);
                 break;
             case 'ol':
             case 'ul': {
@@ -228,12 +244,12 @@ function getStructuredContentText(content, dictionary, imageState, format, ances
                 text = `${separator}${outputs.join('\n')}${separator}`;
                 break;
             }
-            default: text = getStructuredContentText(content.content, dictionary, imageState, format, children, layout === 'table-fallback' ? layout : 'normal'); break;
+            default: text = getStructuredContentText(content.content, dictionary, imageState, format, children); break;
         }
     }
-    if (rule) { text = escapeText(rule.prefix ?? '', format) + text + escapeText(rule.suffix ?? '', format); }
+    if (rule?.action === 'content') { text = joinText(joinText(escapeText(rule.prefix ?? '', format), text, format), escapeText(rule.suffix ?? '', format), format); }
     if (layout === 'list-item' || layout === 'table-cell') { return text; }
-    if (tag === 'table' && layout !== 'table-fallback') { return text; }
+    if (tag === 'table') { return text; }
     if (tag === 'ol' || tag === 'ul') { return text; }
     switch (tag) {
         case 'rt': return `(${text})`;
@@ -267,28 +283,35 @@ function hasTable(content) {
  * @param {ImageState} imageState
  * @param {'markdown'|'text'} format
  * @param {import('structured-content').Element[]} ancestors
- * @param {import('structured-content').Element} [convertedGroup]
  * @returns {string}
  */
-function getTableText(content, dictionary, imageState, format, ancestors, convertedGroup) {
+function getTableText(content, dictionary, imageState, format, ancestors) {
     /** @type {import('structured-content').TableElement[][]} */
     const rows = [];
     /** @type {Map<import('structured-content').TableElement, import('structured-content').Element[]>} */
     const cellAncestors = new Map();
-    let mappedGroup = false;
+    /** @type {Set<import('structured-content').TableElement>} */
+    const suppressedCells = new Set();
+    /** @type {{node: import('structured-content').Element, start: number, end: number, rule: import('settings').CopyContentRule, next?: import('structured-content').Element}[]} */
+    const groups = [];
     /**
      * @param {import('structured-content').Content|undefined} item
      * @param {import('structured-content').Element[]} parents
+     * @param {boolean} suppressed
+     * @param {import('structured-content').Element} [next]
      */
-    const collect = (item, parents) => {
+    const collect = (item, parents, suppressed, next) => {
         if (Array.isArray(item)) {
-            for (const child of item) { collect(child, parents); }
+            for (const [index, child] of item.entries()) {
+                const sibling = item[index + 1];
+                collect(child, parents, suppressed, typeof sibling === 'object' && !Array.isArray(sibling) ? sibling : void 0);
+            }
             return;
         }
         if (typeof item !== 'object') { return; }
-        const rule = item === convertedGroup ? void 0 : findCopyContentRule(item, parents, dictionary, imageState.revisions.get(dictionary), imageState.contentRules);
-        if (rule?.action === 'omit') { return; }
-        if (rule && (rule.action !== 'content' || rule.prefix || rule.suffix || rule.separator)) { mappedGroup = true; }
+        const rule = findCopyContentRule(item, parents, dictionary, imageState.revisions.get(dictionary), imageState.contentRules);
+        const start = rows.length;
+        const skipContent = suppressed || (typeof rule !== 'undefined' && rule.action !== 'content');
         if (item.tag === 'tr') {
             /** @type {import('structured-content').TableElement[]} */
             const cells = [];
@@ -299,17 +322,17 @@ function getTableText(content, dictionary, imageState, format, ancestors, conver
                 } else if (typeof child === 'object' && (child.tag === 'td' || child.tag === 'th')) {
                     cells.push(child);
                     cellAncestors.set(child, [item, ...parents]);
+                    if (skipContent) { suppressedCells.add(child); }
                 }
             };
             collectCells(item.content);
             rows.push(cells);
-        } else if (item.tag === 'thead' || item.tag === 'tbody' || item.tag === 'tfoot') { collect(item.content, [item, ...parents]); }
+        } else if (item.tag === 'thead' || item.tag === 'tbody' || item.tag === 'tfoot') { collect(item.content, [item, ...parents], skipContent); }
+        if (rule && !suppressed && rows.length > start) {
+            groups.push({node: item, start, end: rows.length, rule, next: next && findCopyContentRule(next, parents, dictionary, imageState.revisions.get(dictionary), imageState.contentRules) === rule ? next : void 0});
+        }
     };
-    collect(content, ancestors);
-    // Convert mapped groups independently so their operations retain the remaining table structure.
-    if (mappedGroup) {
-        return getStructuredContentText(convertedGroup ? convertedGroup.content : content, dictionary, imageState, format, convertedGroup ? [convertedGroup, ...ancestors] : ancestors, 'table-fallback');
-    }
+    collect(content, ancestors, false);
     const nested = rows.some((row) => row.some((cell) => hasTable(cell.content)));
     const cellFormat = nested ? 'text' : format;
     /**
@@ -326,7 +349,7 @@ function getTableText(content, dictionary, imageState, format, ancestors, conver
         for (const cell of row) {
             const parents = cellAncestors.get(cell) ?? ancestors;
             const rule = findCopyContentRule(cell, parents, dictionary, state.revisions.get(dictionary), state.contentRules);
-            const text = getStructuredContentText(cell, dictionary, state, outputFormat, parents, 'table-cell');
+            const text = suppressedCells.has(cell) ? '' : getStructuredContentText(cell, dictionary, state, outputFormat, parents, 'table-cell');
             const output = preserveLines ? text.replace(/^[ \n]+|[ \n]+$/g, '') : text.trim().replace(/\s*\n\s*/g, '; ').replace(/\t/g, ' ');
             if (output.trim().length > 0 && rule && rule === previous && rule.action !== 'omit') { outputs[outputs.length - 1] += escapeText(rule.separator ?? '', outputFormat); }
             outputs.push(output);
@@ -335,7 +358,6 @@ function getTableText(content, dictionary, imageState, format, ancestors, conver
         return outputs;
     });
     const texts = getCellTexts(imageState, cellFormat, nested);
-    if (!texts.some((row) => row.some((text) => text.trim().length > 0))) { return ''; }
     /** @type {string[][]} */
     let grid = [];
     let expanded = 0;
@@ -376,6 +398,41 @@ function getTableText(content, dictionary, imageState, format, ancestors, conver
             for (let i = 0; i < width; ++i) { row[i] ??= ''; }
         }
     }
+    const outputFormat = nested || oversized ? 'text' : format;
+    /** @type {Set<number>} */
+    const omittedRows = new Set();
+    const literal = (/** @type {string} */ value) => {
+        value = escapeText(value, outputFormat);
+        return nested || oversized ? value : value.replace(/\s*\n\s*/g, '; ').replace(/\t/g, ' ');
+    };
+    const groupsByNode = new Map(groups.map((group) => [group.node, group]));
+    // Decorate the expanded grid so row mappings cannot shift cells carried from earlier rows.
+    for (const {node, start, end, rule, next} of groups) {
+        const indices = Array.from({length: end - start}, (_, index) => start + index).filter((index) => !omittedRows.has(index));
+        if (indices.length === 0) { continue; }
+        const first = indices[0];
+        const last = indices[indices.length - 1];
+        if (rule.action === 'omit') {
+            for (const index of indices) { omittedRows.add(index); }
+            continue;
+        }
+        if (rule.action !== 'content') {
+            for (const index of indices) { grid[index].fill(''); }
+            const source = rule.action === 'replace' ? rule.text : ('title' in node ? node.title ?? '' : '');
+            grid[first][0] = literal((rule.prefix ?? '') + source + (rule.suffix ?? ''));
+            for (const index of indices.slice(1)) { omittedRows.add(index); }
+            continue;
+        }
+        grid[first][0] = joinText(literal(rule.prefix ?? ''), grid[first][0] ?? '', outputFormat);
+        const column = Math.max(0, grid[last].length - 1);
+        grid[last][column] = joinText(grid[last][column] ?? '', literal(rule.suffix ?? ''), outputFormat);
+        const nextGroup = next && groupsByNode.get(next);
+        if (nextGroup && grid.slice(first, last + 1).some((row) => row.some((text) => text.trim().length > 0)) && grid.slice(nextGroup.start, nextGroup.end).some((row) => row.some((text) => text.trim().length > 0))) {
+            grid[last][column] = joinText(grid[last][column], literal(rule.separator ?? ''), outputFormat);
+        }
+    }
+    grid = grid.filter((_, index) => !omittedRows.has(index));
+    if (!grid.some((row) => row.some((text) => text.trim().length > 0))) { return ''; }
     if (format === 'text' || nested || oversized) {
         const text = grid.map((row) => row.join('\t')).join('\n');
         if (format === 'text') { return `\n${text}\n`; }
@@ -384,7 +441,8 @@ function getTableText(content, dictionary, imageState, format, ancestors, conver
         const fence = '`'.repeat(fenceLength);
         return `\n\n${fence}\n${text}\n${fence}\n\n`;
     }
-    if (!rows[0].some((cell) => cell.tag === 'th')) { grid.unshift(Array.from({length: width}, () => '')); }
+    for (const row of grid) { width = Math.max(width, row.length); }
+    if (!(rows.find((_, index) => !omittedRows.has(index)) ?? []).some((cell) => cell.tag === 'th')) { grid.unshift(Array.from({length: width}, () => '')); }
     const lines = grid.map((row) => `| ${row.join(' | ')} |`);
     lines.splice(1, 0, `| ${Array.from({length: width}, () => '---').join(' | ')} |`);
     return `\n\n${lines.join('\n')}\n\n`;

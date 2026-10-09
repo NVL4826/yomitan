@@ -183,9 +183,7 @@ for (const format of /** @type {const} */ (['markdown', 'text'])) {
 test('Content mappings on table groups keep Markdown cells and literal decorations', () => {
     const entry = createEntry({tag: 'table', content: {tag: 'tbody', content: {tag: 'tr', content: [{tag: 'td', content: 'one'}, {tag: 'td', content: 'two'}]}}});
     const result = getResultEntryText(entry, new Set(), [], new Map([['Dictionary', '1']]), 'markdown', {contentRules: [{...labels, match: {tag: 'tbody'}, prefix: '*group*', suffix: '_end_'}]});
-    expect(result.text).toContain('| one | two |');
-    expect(result.text).toContain('\\*group\\*');
-    expect(result.text).toContain('\\_end\\_');
+    expect(result.text).toContain('| \\*group\\*one | two\\_end\\_ |');
 });
 
 test('Table cell separators escape literal text and omission breaks adjacent runs', () => {
@@ -212,7 +210,7 @@ test('Oversized table fallback retains cell mappings, separators and one image o
 });
 
 for (const mappedWrapper of [false, true]) {
-    test(`Table fallback terminates with a mapped row and ${mappedWrapper ? 'mapped' : 'unmapped'} wrapper`, () => {
+    test(`Table row decoration retains one grid with a ${mappedWrapper ? 'mapped' : 'unmapped'} wrapper`, () => {
         const entry = createEntry({tag: 'table',
             content: {tag: 'tbody',
                 content: [
@@ -223,9 +221,69 @@ for (const mappedWrapper of [false, true]) {
         const rules = [{...labels, match: {tag: 'tr', data: {role: 'mapped'}}, prefix: '*row*'}];
         if (mappedWrapper) { rules.unshift({...labels, id: 'wrapper', match: {tag: 'tbody'}, prefix: '*wrapper*'}); }
         const result = getResultEntryText(entry, new Set(), [], new Map([['Dictionary', '1']]), 'markdown', {contentRules: rules});
-        expect(result.text).toContain('| one | two |');
+        expect(result.text).toContain(mappedWrapper ? '| \\*wrapper\\*\\*row\\*one | two |' : '| \\*row\\*one | two |');
         expect(result.text).toContain('| three | four |');
         expect(result.text.match(/\\\*row\\\*/g)).toHaveLength(1);
         if (mappedWrapper) { expect(result.text.match(/\\\*wrapper\\\*/g)).toHaveLength(1); }
     });
 }
+
+
+test('Joined literal mapping fields and sibling boundaries cannot create Markdown list markers', () => {
+    const revisions = new Map([['Dictionary', '1']]);
+    const entry = createEntry({tag: 'span', content: '. literal'});
+    for (const action of /** @type {const} */ (['content', 'title', 'replace'])) {
+        entry.definitions[0].entries = [{type: 'structured-content', content: {tag: 'span', title: '. literal', content: '. literal'}}];
+        const base = {...labels, match: {tag: 'span'}, prefix: '1'};
+        const rule = action === 'replace' ? {...base, action, text: '. literal'} : {...base, action};
+        expect(getResultEntryText(entry, new Set(), [], revisions, 'markdown', {contentRules: [rule]}).text).toContain('1\\. literal');
+    }
+    const siblings = createEntry([{tag: 'span', content: '1'}, {tag: 'span', content: '. literal'}]);
+    expect(getResultEntryText(siblings, new Set(), [], revisions, 'markdown', {contentRules: [{...labels, match: {tag: 'span'}, separator: ''}]}).text).toContain('1\\. literal');
+});
+
+
+for (const format of /** @type {const} */ (['markdown', 'text'])) {
+    test(`Row and section decorations preserve the shared spanning-cell grid in ${format}`, () => {
+        const entry = createEntry({tag: 'table',
+            content: [
+                {tag: 'thead', content: {tag: 'tr', content: [{tag: 'th', content: 'left'}, {tag: 'th', content: 'right'}]}},
+                {tag: 'tbody',
+                    content: [
+                        {tag: 'tr', data: {row: 'first'}, content: [{tag: 'td', rowSpan: 2, content: 'A'}, {tag: 'td', content: 'B'}]},
+                        {tag: 'tr', content: {tag: 'td', content: 'C'}},
+                    ]},
+            ]});
+        const rules = [{...labels, match: {tag: 'tr', data: {row: 'first'}}, prefix: 'Row: '}, {...labels, id: 'section', match: {tag: 'tbody'}, suffix: ' end'}];
+        const copied = getResultEntryText(entry, new Set(), [], new Map([['Dictionary', '1']]), format, {contentRules: rules}).text;
+        expect(copied).toContain(format === 'markdown' ? '| Row: A | B |\n| A | C end |' : 'Row: A\tB\nA\tC end');
+        if (format === 'markdown') { expect(copied.match(/\| --- \| --- \|/g)).toHaveLength(1); }
+    });
+}
+
+
+for (const action of /** @type {const} */ (['omit', 'replace', 'title'])) {
+    test(`A table row ${action} keeps surviving columns and skips descendant images`, () => {
+        const entry = createEntry({tag: 'table',
+            content: [
+                {tag: 'tr', content: [{tag: 'th', content: 'left'}, {tag: 'th', content: 'right'}]},
+                {tag: 'tr', data: {row: 'mapped'}, content: [{tag: 'td', rowSpan: 2, content: {tag: 'img', path: 'skip.svg'}}, {tag: 'td', content: 'B'}]},
+                {tag: 'tr', content: {tag: 'td', content: 'C'}},
+            ]});
+        const base = {id: 'row', dictionary: 'Dictionary', revision: '1', match: {tag: 'tr', data: {row: 'mapped'}}};
+        const rule = action === 'replace' ? {...base, action, text: 'Replacement row'} : {...base, action};
+        const result = getResultEntryText(entry, new Set(), [], new Map([['Dictionary', '1']]), 'markdown', {contentRules: [rule]});
+        expect(result.text).toContain('|  | C |');
+        expect(result.text).not.toContain('B');
+        expect(result.images).toEqual([]);
+        expect(result.unresolvedImages).toBe(0);
+        if (action === 'replace') { expect(result.text).toContain('| Replacement row |  |'); }
+    });
+}
+
+
+test('A mapped empty table row still produces a valid decorated column', () => {
+    const entry = createEntry({tag: 'table', content: {tag: 'tr'}});
+    const copied = getResultEntryText(entry, new Set(), [], new Map([['Dictionary', '1']]), 'markdown', {contentRules: [{...labels, match: {tag: 'tr'}, prefix: 'Empty row', suffix: ' note'}]}).text;
+    expect(copied).toContain('|  |\n| --- |\n| Empty row note |');
+});
