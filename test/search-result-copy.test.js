@@ -1635,6 +1635,7 @@ test('Content inspector previews the complete result, saves the first-match rule
     mockRulePersistence(api, optionsFull);
     await render([createEntry('言葉', [{type: 'structured-content', content: {tag: 'span', data: {kind: 'label'}, title: 'Original title', content: 'original'}}])]);
     /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '[data-action="inspect-copy-content"]')).click();
+    expect(/** @type {HTMLSelectElement} */ (querySelectorNotNull(window.document, '#copy-content-candidate')).value).toBe('0');
     expect(querySelectorNotNull(window.document, '#copy-content-context').textContent).toContain('Original title');
     const matcher = /** @type {HTMLTextAreaElement} */ (querySelectorNotNull(window.document, '#copy-content-match'));
     expect(parseJson(matcher.value)).toMatchObject({tag: 'span', data: {kind: 'label'}});
@@ -1651,7 +1652,11 @@ test('Content inspector previews the complete result, saves the first-match rule
     expect(querySelectorNotNull(window.document, '#copy-content-preview').textContent).toContain('replacement');
     expect(querySelectorNotNull(window.document, '#copy-content-preview').textContent).not.toContain('original');
     save.click();
-    await vi.waitFor(() => { expect(optionsFull.global.copyContentRules).toHaveLength(8); });
+    await vi.waitFor(() => {
+        expect(querySelectorNotNull(window.document, '#copy-content-inspector-status').textContent).toBe('Rules saved. Copy again to use them.');
+        expect(/** @type {HTMLFieldSetElement} */ (querySelectorNotNull(window.document, '#copy-content-fields')).disabled).toBe(false);
+    });
+    expect(optionsFull.global.copyContentRules).toHaveLength(8);
     /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '[data-action="copy-entry"]')).click();
     expect(clipboard.text).toContain('replacement');
     text.value = 'unsaved draft';
@@ -1666,7 +1671,11 @@ test('Content inspector previews the complete result, saves the first-match rule
     expect(clipboard.text).toContain('replacement');
     mockRulePersistence(api, optionsFull);
     /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '#copy-content-delete')).click();
-    await vi.waitFor(() => { expect(optionsFull.global.copyContentRules).toHaveLength(7); });
+    await vi.waitFor(() => {
+        expect(querySelectorNotNull(window.document, '#copy-content-active-rule').textContent).toBe('No matching rule.');
+        expect(/** @type {HTMLFieldSetElement} */ (querySelectorNotNull(window.document, '#copy-content-fields')).disabled).toBe(false);
+    });
+    expect(optionsFull.global.copyContentRules).toHaveLength(7);
     /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '[data-action="copy-entry"]')).click();
     expect(clipboard.text).toContain('original');
 });
@@ -1728,15 +1737,31 @@ test('Content inspector order controls change first-match handling and retain in
     expect(querySelectorNotNull(window.document, '#copy-content-active-rule').textContent).toContain('first');
     expect(querySelectorNotNull(window.document, '#copy-content-inactive').textContent).toContain('old');
     /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '#copy-content-earlier')).click();
-    await vi.waitFor(() => { expect(optionsFull.global.copyContentRules[0].id).toBe('first'); });
+    await vi.waitFor(() => {
+        expect(querySelectorNotNull(window.document, '#copy-content-inspector-status').textContent).toBe('Rules saved. Copy again to use them.');
+        expect(/** @type {HTMLFieldSetElement} */ (querySelectorNotNull(window.document, '#copy-content-fields')).disabled).toBe(false);
+    });
+    expect(optionsFull.global.copyContentRules[0].id).toBe('first');
     /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '#copy-content-later')).click();
-    await vi.waitFor(() => { expect(optionsFull.global.copyContentRules[0].id).toBe('inactive'); });
+    await vi.waitFor(() => {
+        expect(querySelectorNotNull(window.document, '#copy-content-inspector-status').textContent).toBe('Rules saved. Copy again to use them.');
+        expect(/** @type {HTMLFieldSetElement} */ (querySelectorNotNull(window.document, '#copy-content-fields')).disabled).toBe(false);
+    });
+    expect(optionsFull.global.copyContentRules[0].id).toBe('inactive');
     /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '#copy-content-later')).click();
-    await vi.waitFor(() => { expect(optionsFull.global.copyContentRules[1].id).toBe('second'); });
+    await vi.waitFor(() => {
+        expect(querySelectorNotNull(window.document, '#copy-content-inspector-status').textContent).toBe('Rules saved. Copy again to use them.');
+        expect(/** @type {HTMLFieldSetElement} */ (querySelectorNotNull(window.document, '#copy-content-fields')).disabled).toBe(false);
+    });
+    expect(optionsFull.global.copyContentRules[1].id).toBe('second');
     /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '[data-action="copy-entry"]')).click();
     expect(clipboard.text).toContain('second match');
     /** @type {HTMLButtonElement} */ (querySelectorNotNull(window.document, '#copy-content-earlier')).click();
-    await vi.waitFor(() => { expect(optionsFull.global.copyContentRules[0].id).toBe('second'); });
+    await vi.waitFor(() => {
+        expect(querySelectorNotNull(window.document, '#copy-content-inspector-status').textContent).toBe('Rules saved. Copy again to use them.');
+        expect(/** @type {HTMLFieldSetElement} */ (querySelectorNotNull(window.document, '#copy-content-fields')).disabled).toBe(false);
+    });
+    expect(optionsFull.global.copyContentRules[0].id).toBe('second');
     /** @type {Blob | null} */
     let exported = null;
     window.URL.createObjectURL = vi.fn((/** @type {Blob|MediaSource} */ blob) => {

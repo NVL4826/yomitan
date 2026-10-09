@@ -139,7 +139,7 @@ export function getCopyContentCandidates(entry, excludedDictionaries, rules, rev
         const revision = revisions.get(dictionary) ?? '';
         /**
          * @param {import('structured-content').Content|undefined} content
-         * @param {import('structured-content').Element[]} ancestors
+         * @param {CopyContentNode[]} ancestors
          */
         const visit = (content, ancestors) => {
             if (Array.isArray(content)) {
@@ -159,5 +159,6 @@ export function getCopyContentCandidates(entry, excludedDictionaries, rules, rev
 }
 
 /**
- * @typedef {{node: Exclude<import('structured-content').Element, import('structured-content').ImageElement>, ancestors: import('structured-content').Element[], dictionary: string, revision: string, ruleId?: string}} CopyContentCandidate
+ * @typedef {Exclude<import('structured-content').Element, import('structured-content').ImageElement> & {data?: import('structured-content').Data}} CopyContentNode
+ * @typedef {{node: CopyContentNode, ancestors: CopyContentNode[], dictionary: string, revision: string, ruleId?: string}} CopyContentCandidate
  */
