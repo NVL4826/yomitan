@@ -6,6 +6,8 @@ Design: [search-copy-markdown.md](search-copy-markdown.md)
 
 Integration branch: `feat/search-copy-markdown`.
 
+All implementation tickets are complete on the integration branch. [PR #13](https://github.com/NVL4826/yomitan/pull/13) closes #9, #10, #11, and #12 when merged.
+
 ## Task graph
 
 - [#10: Content conversion](https://github.com/NVL4826/yomitan/issues/10): Markdown headings/lists/tables, numbered sections in both formats, literal-text escaping, verified empty-symbol title recovery, and preserved image behavior. No blockers.

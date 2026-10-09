@@ -1,6 +1,6 @@
 # Search result copy: Markdown, tables, and symbols
 
-Status: complete design confirmed by the user; implementation authorized.
+Status: implemented on `feat/search-copy-markdown`; [integration PR #13](https://github.com/NVL4826/yomitan/pull/13).
 
 ## Purpose
 
@@ -58,6 +58,7 @@ Use the existing result-entry Copy interaction tests, stubbing the clipboard bou
 - Check headings, lists, full headword/reading variants, and consecutive dictionary numbering in both formats. Excluding a dictionary must leave no gap and no content from that dictionary.
 - Check the supplied Jitendex table and other titled symbols in verified contexts. Unrelated tooltips and empty spans outside those contexts must not contribute titles. Preserve the original English descriptions without translation or invented glyphs.
 - Check ordinary tables, empty cells, headerless tables, merged cells, multiline cells, nested-table fallback, and literal pipe/Markdown characters. Compare the resulting clipboard text with the agreed representations.
+- Check prose following a Markdown table, parent continuation after a nested list, and literal tilde fences; formatting must not absorb following content into the preceding block.
 - Preserve collapsed content, image replacement/omission behavior, unresolved-image feedback, no-content clipboard preservation, clipboard-failure feedback, and protection against clipboard-monitor search feedback.
 - Run the existing relevant tests and repository-required checks appropriate to the changes. Browser verification covers keyboard access to the format selector and actual paste in both formats; explicitly report any unavailable checks.
 
@@ -68,6 +69,12 @@ Use the existing result-entry Copy interaction tests, stubbing the clipboard bou
 - Keep image inspection context readable when adapting the converter shared with the inspector.
 - Do not add user-configurable symbol rules, global tooltip conversion, CSS appearance reproduction, HTML clipboard payloads, or additional formatting beyond headings, lists, and tables.
 - The choices are reversible extensions of existing copy behavior; no architecture decision record is warranted.
+
+## Verification record
+
+- Final clean-checkout run: 4,911 unit tests passed, with 46 skipped by existing configuration; 141 JSON checks passed. Options tests, all static analysis projects, and build checks passed. Changed converter/tests also passed scoped lint and main/test typechecks after review fixes.
+- Standards review and Spec review findings were fixed and rechecked, including Markdown block boundaries and literal tilde fences.
+- Browser and actual clipboard-paste verification remain unavailable: Chromium installation stalled twice and Playwright startup did not complete. The keyboard/paste regression scenario is committed for a working browser environment.
 
 ## Relationship to existing specs
 
