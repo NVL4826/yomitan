@@ -111,6 +111,7 @@ export class SearchDisplayController {
             ['searchDisplayControllerGetMode', this._onMessageGetMode.bind(this)],
             ['searchDisplayControllerSetMode', this._onMessageSetMode.bind(this)],
             ['searchDisplayControllerUpdateSearchQuery', this._onExternalSearchUpdate.bind(this)],
+            ['searchDisplayControllerSelectSearch', this._onExternalSearchSelect.bind(this)],
         ]);
     }
 
@@ -699,6 +700,12 @@ export class SearchDisplayController {
         void this._updateSearchFromClipboard(text, animate, false);
     }
 
+    /** */
+    _onExternalSearchSelect() {
+        this._queryInput.focus();
+        this._queryInput.select();
+    }
+
     /**
      * @param {import('clipboard-monitor').Events['change']} event
      */
@@ -964,7 +971,7 @@ export class SearchDisplayController {
     _search(animate, historyMode, lookup, flags) {
         this._updateSearchText();
 
-        const query = this._queryInput.value;
+        const query = this._queryInput.value.trim();
         const depth = this._display.depth;
         const url = window.location.href;
         const documentTitle = document.title;
